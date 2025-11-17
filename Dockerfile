@@ -4,15 +4,11 @@ RUN apk update && apk add --no-cache git build-base libjpeg-turbo-dev libwebp-de
 
 WORKDIR /build
 
-# Copiar manifestos e o módulo local antes para aproveitar cache do go mod download
-COPY go.mod go.sum ./
-COPY whatsmeow-lib ./whatsmeow-lib
+# Copiar TUDO primeiro, incluindo a pasta whatsmeow local
+COPY . .
 
 # Agora fazer download das dependências (com replace funcionando)
 RUN go mod download
-
-# Copiar o restante do código-fonte após baixar dependências
-COPY . .
 
 RUN CGO_ENABLED=1 go build -o server ./cmd/evolution-go
 
