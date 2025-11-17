@@ -21,6 +21,7 @@ Para documentação detalhada, consulte: [Configuração](../fundamentos/configu
 |----------|--------|-----------|
 | `SERVER_PORT` | `4000` | Porta HTTP |
 | `CLIENT_NAME` | `evolution` | Nome identificador |
+| `PUBLIC_BASE_URL` | - | URL externa usada em logs/respostas (ex: `https://api.suaempresa.com`) |
 | `OS_NAME` | `Linux` | Sistema operacional |
 
 ---
@@ -185,6 +186,7 @@ DATABASE_SAVE_MESSAGES=false
 # Servidor
 SERVER_PORT=4000
 CLIENT_NAME=evolution
+PUBLIC_BASE_URL=https://api.seu-dominio.com
 OS_NAME=Linux
 
 # Banco de Dados

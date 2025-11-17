@@ -11,6 +11,7 @@ services:
       # Servidor
       SERVER_PORT: 4000
       CLIENT_NAME: "evolution"
+      PUBLIC_BASE_URL: "https://api.seudominio.com"
 
       # Segurança (OBRIGATÓRIO)
       GLOBAL_API_KEY: "sua-chave-api-segura-aqui"

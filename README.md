@@ -161,6 +161,7 @@ Create a `.env` file in the root directory with the following variables:
 # Server Configuration
 SERVER_PORT=4000
 CLIENT_NAME=evolution
+PUBLIC_BASE_URL=https://api.seudominio.com
 
 # Security
 GLOBAL_API_KEY=your-secure-api-key-here
@@ -237,6 +238,7 @@ services:
 |----------|-------------|---------|
 | `SERVER_PORT` | Server port | `4000` |
 | `CLIENT_NAME` | Client identifier | `evolution` |
+| `PUBLIC_BASE_URL` | External URL used em logs e respostas | Required se quiser divulgar link |
 | `GLOBAL_API_KEY` | API authentication key | Required |
 | `DATABASE_SAVE_MESSAGES` | Enable message storage | `false` |
 | `WADEBUG` | WhatsApp debug level | `INFO` |

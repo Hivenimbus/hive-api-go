@@ -26,6 +26,7 @@ type Config struct {
 	PostgresDB           string
 	DatabaseSaveMessages bool
 	GlobalApiKey         string
+	PublicBaseURL        string
 	WaDebug              string
 	LogType              string
 	WebhookFiles         bool
@@ -177,6 +178,8 @@ func Load() *Config {
 	amqpGlobalEnabled := os.Getenv(config_env.AMQP_GLOBAL_ENABLED)
 
 	webhookUrl := os.Getenv(config_env.WEBHOOK_URL)
+	publicBaseURL := strings.TrimSpace(os.Getenv(config_env.PUBLIC_BASE_URL))
+	publicBaseURL = strings.TrimRight(publicBaseURL, "/")
 
 	apiAudioConverter := os.Getenv(config_env.API_AUDIO_CONVERTER)
 	apiAudioConverterKey := os.Getenv(config_env.API_AUDIO_CONVERTER_KEY)
@@ -274,6 +277,7 @@ func Load() *Config {
 		AmqpUrl:              amqpUrl,
 		AmqpGlobalEnabled:    amqpGlobalEnabled == "true",
 		WebhookUrl:           webhookUrl,
+		PublicBaseURL:        publicBaseURL,
 		ClientName:           clientName,
 		ApiAudioConverter:    apiAudioConverter,
 		ApiAudioConverterKey: apiAudioConverterKey,

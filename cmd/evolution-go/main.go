@@ -193,7 +193,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		community_handler.NewCommunityHandler(communityService),
 		label_handler.NewLabelHandler(labelService),
 		newsletter_handler.NewNewsletterHandler(newsletterService),
-		server_handler.NewServerHandler(),
+		server_handler.NewServerHandler(config.PublicBaseURL),
 	).AssignRoutes(r)
 
 	if config.ConnectOnStartup {
@@ -349,6 +349,12 @@ func main() {
 	}
 
 	r := setupRouter(db, authDB, sqliteDB, config, conn, exPath)
+
+	if config.PublicBaseURL != "" {
+		logger.LogInfo("PUBLIC_BASE_URL configurada: %s", config.PublicBaseURL)
+	} else {
+		logger.LogInfo("PUBLIC_BASE_URL não configurada; use o domínio/porta publicados no painel.")
+	}
 
 	logger.LogInfo("Iniciando servidor na porta %s", os.Getenv("SERVER_PORT"))
 	r.Run(":" + os.Getenv("SERVER_PORT"))
