@@ -4,24 +4,13 @@ RUN apk update && apk add --no-cache git build-base libjpeg-turbo-dev libwebp-de
 
 WORKDIR /build
 
-# 1. Copia os arquivos de módulo
-COPY go.mod go.sum ./
-
-# 2. Copia a pasta local exigida pelo 'replace'
-COPY whatsmeow-lib ./whatsmeow-lib
-
-# 3. Agora sim, baixe as dependências.
-# Esta camada só será recriada se o go.mod, go.sum ou a pasta whatsmeow-lib mudarem.
-RUN go mod download
-
-# 4. Finalmente, copie o resto do código-fonte.
-# Se você mudar só um .go, o Docker pula tudo até aqui.
+# Copiar TUDO primeiro, incluindo a pasta whatsmeow local
 COPY . .
 
-# 5. Compile
-RUN CGO_ENABLED=1 go build -o server ./cmd/evolution-go
+# Agora fazer download das dependências (com replace funcionando)
+RUN go mod download
 
-# --- Estágio Final (sem mudanças) ---
+RUN CGO_ENABLED=1 go build -o server ./cmd/evolution-go
 
 FROM alpine:3.19.1 AS final
 
