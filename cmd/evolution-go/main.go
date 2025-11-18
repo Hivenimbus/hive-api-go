@@ -181,7 +181,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 
 	r := gin.Default()
 	r.Use(telemetry.TelemetryMiddleware())
-	routes.NewRouter(
+	appRoutes := routes.NewRouter(
 		auth_middleware.NewMiddleware(config, instanceService),
 		instance_handler.NewInstanceHandler(instanceService, config),
 		user_handler.NewUserHandler(userService),
@@ -194,13 +194,16 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		label_handler.NewLabelHandler(labelService),
 		newsletter_handler.NewNewsletterHandler(newsletterService),
 		server_handler.NewServerHandler(config.PublicBaseURL),
-	).AssignRoutes(r)
+		config.PublicBasePath,
+	)
+	appRoutes.AssignRoutes(r)
 
 	if config.ConnectOnStartup {
 		go whatsmeowService.ConnectOnStartup(config.ClientName)
 	}
 
-	r.GET("/ws", func(c *gin.Context) {
+	baseGroup := baseRouterGroup(r, config.PublicBasePath)
+	baseGroup.GET("/ws", func(c *gin.Context) {
 		token := c.Query("token")
 		instanceId := c.Query("instanceId")
 
@@ -214,6 +217,14 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 	})
 
 	return r
+}
+
+func baseRouterGroup(engine *gin.Engine, basePath string) *gin.RouterGroup {
+	if basePath == "" {
+		return engine.Group("")
+	}
+
+	return engine.Group(basePath)
 }
 
 func migrate(db *gorm.DB) {

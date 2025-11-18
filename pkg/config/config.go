@@ -27,6 +27,7 @@ type Config struct {
 	DatabaseSaveMessages bool
 	GlobalApiKey         string
 	PublicBaseURL        string
+	PublicBasePath       string
 	WaDebug              string
 	LogType              string
 	WebhookFiles         bool
@@ -178,8 +179,12 @@ func Load() *Config {
 	amqpGlobalEnabled := os.Getenv(config_env.AMQP_GLOBAL_ENABLED)
 
 	webhookUrl := os.Getenv(config_env.WEBHOOK_URL)
-	publicBaseURL := strings.TrimSpace(os.Getenv(config_env.PUBLIC_BASE_URL))
-	publicBaseURL = strings.TrimRight(publicBaseURL, "/")
+	publicBaseURLRaw := strings.TrimSpace(os.Getenv(config_env.PUBLIC_BASE_URL))
+	publicBaseURL := strings.TrimRight(publicBaseURLRaw, "/")
+	publicBasePath, err := derivePublicBasePath(publicBaseURLRaw)
+	if err != nil {
+		logger.LogFatal("[CONFIG] %v", err)
+	}
 
 	apiAudioConverter := os.Getenv(config_env.API_AUDIO_CONVERTER)
 	apiAudioConverterKey := os.Getenv(config_env.API_AUDIO_CONVERTER_KEY)
@@ -278,6 +283,7 @@ func Load() *Config {
 		AmqpGlobalEnabled:    amqpGlobalEnabled == "true",
 		WebhookUrl:           webhookUrl,
 		PublicBaseURL:        publicBaseURL,
+		PublicBasePath:       publicBasePath,
 		ClientName:           clientName,
 		ApiAudioConverter:    apiAudioConverter,
 		ApiAudioConverterKey: apiAudioConverterKey,
@@ -376,4 +382,44 @@ func validateAMQPURL(amqpURL string) error {
 
 	logger.LogInfo("[CONFIG] AMQP URL validation successful: %s://%s", parsedURL.Scheme, parsedURL.Host)
 	return nil
+}
+
+func derivePublicBasePath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil {
+		// Allow specifying only a path such as "/api" without scheme/host
+		if !strings.Contains(value, "://") {
+			return normalizeBasePath(value), nil
+		}
+		return "", fmt.Errorf("invalid PUBLIC_BASE_URL: %v", err)
+	}
+
+	path := parsed.Path
+	if path == "" || path == "/" {
+		return "", nil
+	}
+
+	return normalizeBasePath(path), nil
+}
+
+func normalizeBasePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return ""
+	}
+
+	path = strings.ReplaceAll(path, "//", "/")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	path = strings.TrimRight(path, "/")
+	if path == "" || path == "/" {
+		return ""
+	}
+	return path
 }

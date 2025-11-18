@@ -21,7 +21,7 @@ Para documentação detalhada, consulte: [Configuração](../fundamentos/configu
 |----------|--------|-----------|
 | `SERVER_PORT` | `4000` | Porta HTTP |
 | `CLIENT_NAME` | `evolution` | Nome identificador |
-| `PUBLIC_BASE_URL` | - | URL externa usada em logs/respostas (ex: `https://api.suaempresa.com`) |
+| `PUBLIC_BASE_URL` | - | URL externa usada em logs/respostas. Se incluir caminho (ex.: `https://api.suaempresa.com/api`), todas as rotas serão expostas nesse prefixo (`/api`). |
 | `OS_NAME` | `Linux` | Sistema operacional |
 
 ---
@@ -186,7 +186,7 @@ DATABASE_SAVE_MESSAGES=false
 # Servidor
 SERVER_PORT=4000
 CLIENT_NAME=evolution
-PUBLIC_BASE_URL=https://api.seu-dominio.com
+PUBLIC_BASE_URL=https://api.seu-dominio.com/api
 OS_NAME=Linux
 
 # Banco de Dados
@@ -219,6 +219,8 @@ MINIO_SECRET_KEY=minioadmin
 MINIO_BUCKET=evolution-media
 MINIO_USE_SSL=false
 ```
+
+> ℹ️ Sempre que `PUBLIC_BASE_URL` possuir caminho (como `/api`), a API completa — endpoints REST, Swagger, Manager e WebSocket — será disponibilizada sob o mesmo prefixo.
 
 ---
 
