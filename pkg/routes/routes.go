@@ -2,7 +2,6 @@ package routes
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -37,7 +36,6 @@ type Routes struct {
 	labelHandler            label_handler.LabelHandler
 	newsletterHandler       newsletter_handler.NewsletterHandler
 	serverHandler           server_handler.ServerHandler
-	basePath                string
 }
 
 func (r *Routes) AssignRoutes(eng *gin.Engine) {
@@ -57,29 +55,27 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 		c.Next()
 	})
 
-	base := r.baseGroup(eng)
+	eng.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	base.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
-	base.GET("/favicon.ico", func(c *gin.Context) {
+	eng.GET("/favicon.ico", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
 
 	// Rotas para o gerenciador React (sem autenticação)
-	base.Static("/assets", "./manager/dist/assets")
+	eng.Static("/assets", "./manager/dist/assets")
 
 	// Ajuste nas rotas do manager para suportar client-side routing do React
-	base.GET("/manager/*any", func(c *gin.Context) {
+	eng.GET("/manager/*any", func(c *gin.Context) {
 		c.File("manager/dist/index.html")
 	})
 
-	base.GET("/manager", func(c *gin.Context) {
+	eng.GET("/manager", func(c *gin.Context) {
 		c.File("manager/dist/index.html")
 	})
 
-	base.GET("/server/ok", r.serverHandler.ServerOk)
+	eng.GET("/server/ok", r.serverHandler.ServerOk)
 
-	routes := base.Group("/instance")
+	routes := eng.Group("/instance")
 	{
 		routes.Use(r.authMiddleware.AuthAdmin)
 		{
@@ -94,7 +90,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 		}
 	}
 
-	routes = base.Group("/instance")
+	routes = eng.Group("/instance")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -110,7 +106,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 		}
 	}
 
-	routes = base.Group("/send")
+	routes = eng.Group("/send")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -126,7 +122,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			// TODO: send status
 		}
 	}
-	routes = base.Group("/user")
+	routes = eng.Group("/user")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -144,7 +140,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/profileStatus", r.userHandler.SetProfileStatus)
 		}
 	}
-	routes = base.Group("/message")
+	routes = eng.Group("/message")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -157,7 +153,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/edit", r.jidValidationMiddleware.ValidateNumberField(), r.messageHandler.EditMessage) // TODO: edit MediaMessage too
 		}
 	}
-	routes = base.Group("/chat")
+	routes = eng.Group("/chat")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -170,7 +166,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/history-sync", r.chatHandler.HistorySyncRequest)
 		}
 	}
-	routes = base.Group("/group")
+	routes = eng.Group("/group")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -187,14 +183,14 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/leave", r.jidValidationMiddleware.ValidateNumberField(), r.groupHandler.LeaveGroup)
 		}
 	}
-	routes = base.Group("/call")
+	routes = eng.Group("/call")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
 			routes.POST("/reject", r.jidValidationMiddleware.ValidateNumberField(), r.callHandler.RejectCall)
 		}
 	}
-	routes = base.Group("/community")
+	routes = eng.Group("/community")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -203,7 +199,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/remove", r.jidValidationMiddleware.ValidateJIDFields("number", "communityId"), r.communityHandler.CommunityRemove)
 		}
 	}
-	routes = base.Group("/label")
+	routes = eng.Group("/label")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -213,7 +209,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.GET("/list", r.labelHandler.GetLabels)
 		}
 	}
-	routes = base.Group("/unlabel")
+	routes = eng.Group("/unlabel")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -221,7 +217,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.POST("/message", r.labelHandler.MessageUnlabel)
 		}
 	}
-	routes = base.Group("/newsletter")
+	routes = eng.Group("/newsletter")
 	{
 		routes.Use(r.authMiddleware.Auth)
 		{
@@ -249,7 +245,6 @@ func NewRouter(
 	labelHandler label_handler.LabelHandler,
 	newsletterHandler newsletter_handler.NewsletterHandler,
 	serverHandler server_handler.ServerHandler,
-	basePath string,
 ) *Routes {
 	return &Routes{
 		authMiddleware:          authMiddleware,
@@ -265,27 +260,5 @@ func NewRouter(
 		labelHandler:            labelHandler,
 		newsletterHandler:       newsletterHandler,
 		serverHandler:           serverHandler,
-		basePath:                normalizeBasePath(basePath),
 	}
-}
-
-func (r *Routes) baseGroup(eng *gin.Engine) *gin.RouterGroup {
-	if r.basePath == "" {
-		return eng.Group("")
-	}
-
-	return eng.Group(r.basePath)
-}
-
-func normalizeBasePath(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" || path == "/" {
-		return ""
-	}
-
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	return strings.TrimRight(path, "/")
 }

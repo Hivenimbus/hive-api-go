@@ -161,7 +161,7 @@ Create a `.env` file in the root directory with the following variables:
 # Server Configuration
 SERVER_PORT=4000
 CLIENT_NAME=evolution
-PUBLIC_BASE_URL=https://api.seudominio.com/api
+PUBLIC_BASE_URL=https://api.seudominio.com
 
 # Security
 GLOBAL_API_KEY=your-secure-api-key-here
@@ -180,8 +180,6 @@ LOGTYPE=console
 # AMQP_URL=amqp://guest:guest@localhost:5672/
 # WEBHOOK_URL=https://your-webhook-url.com/webhook
 ```
-
-Quando `PUBLIC_BASE_URL` inclui um caminho (por exemplo, `https://api.seudominio.com/api`), todas as rotas HTTP — incluindo Swagger, Manager e WebSocket — serão disponibilizadas automaticamente sob esse prefixo (`/api` no exemplo).
 
 ## 📚 Documentation
 
@@ -240,7 +238,7 @@ services:
 |----------|-------------|---------|
 | `SERVER_PORT` | Server port | `4000` |
 | `CLIENT_NAME` | Client identifier | `evolution` |
-| `PUBLIC_BASE_URL` | URL pública usada em respostas; se contiver caminho (ex.: `https://api.exemplo.com/api`), todas as rotas ficarão sob o prefixo `/api` | Required se quiser divulgar link |
+| `PUBLIC_BASE_URL` | External URL used em logs e respostas | Required se quiser divulgar link |
 | `GLOBAL_API_KEY` | API authentication key | Required |
 | `DATABASE_SAVE_MESSAGES` | Enable message storage | `false` |
 | `WADEBUG` | WhatsApp debug level | `INFO` |
