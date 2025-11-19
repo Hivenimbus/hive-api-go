@@ -1702,6 +1702,20 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		if err != nil {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.Instance.Id, err)
 		}
+	case *events.KeepAliveTimeout:
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] KeepAlive timeout detected (count: %d, last success: %v)", mycli.userID, evt.ErrorCount, evt.LastSuccess)
+
+		// Force reconnection if keepalive fails
+		// Trigger instance restart via websocket-capable service (non-blocking)
+		go func(instanceID string) {
+			mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] KeepAlive timeout detected, restarting instance", instanceID)
+			if err := mycli.service.ReconnectClient(instanceID); err != nil {
+				mycli.loggerWrapper.GetLogger(instanceID).LogError("[%s] Failed to restart instance: %v", instanceID, err)
+			}
+		}(mycli.userID)
+
+	case *events.KeepAliveRestored:
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] KeepAlive restored", mycli.userID)
 	case *events.Disconnected:
 		doWebhook = true
 		postMap["event"] = "Disconnected"
