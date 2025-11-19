@@ -29,6 +29,8 @@ type InstanceService interface {
 	Reconnect(instance *instance_model.Instance) error
 	Disconnect(instance *instance_model.Instance) (*instance_model.Instance, error)
 	Logout(instance *instance_model.Instance) (*instance_model.Instance, error)
+	Pause(instance *instance_model.Instance) (*instance_model.Instance, error)
+	Resume(instance *instance_model.Instance) (*instance_model.Instance, error)
 	Status(instance *instance_model.Instance) (*StatusStruct, error)
 	GetQr(instance *instance_model.Instance) (*QrcodeStruct, error)
 	Pair(data *PairStruct, instance *instance_model.Instance) (*PairReturnStruct, error)
@@ -43,7 +45,10 @@ type InstanceService interface {
 	GetLogs(instanceId string, startDate, endDate time.Time, level string, limit int) ([]logger_wrapper.LogEntry, error)
 	GetAdvancedSettings(instanceId string) (*instance_model.AdvancedSettings, error)
 	UpdateAdvancedSettings(instanceId string, settings *instance_model.AdvancedSettings) error
+	TouchActivity(instance *instance_model.Instance) error
 }
+
+var ErrInstancePaused = whatsmeow_service.ErrInstancePaused
 
 type instances struct {
 	instanceRepository instance_repository.InstanceRepository
@@ -80,10 +85,12 @@ type ConnectStruct struct {
 }
 
 type StatusStruct struct {
-	Connected bool
-	LoggedIn  bool
-	myJid     *types.JID
-	Name      string
+	Connected      bool
+	LoggedIn       bool
+	myJid          *types.JID
+	Name           string
+	Paused         bool
+	LastActivityAt *time.Time
 }
 
 type QrcodeStruct struct {
@@ -113,6 +120,17 @@ type ForceReconnectStruct struct {
 
 func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
 	logger := i.loggerWrapper.GetLogger(instanceId)
+	instance, err := i.instanceRepository.GetInstanceByID(instanceId)
+	if err != nil {
+		logger.LogError("[%s] Failed to load instance data: %v", instanceId, err)
+		return nil, err
+	}
+
+	if instance.Paused {
+		logger.LogWarn("[%s] Instance is paused, blocking client usage", instanceId)
+		return nil, ErrInstancePaused
+	}
+
 	client := i.clientPointer[instanceId]
 	logger.LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
@@ -194,6 +212,11 @@ func (i instances) Create(data *CreateStruct) (*instance_model.Instance, error) 
 func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instance) (*instance_model.Instance, string, string, error) {
 	var subscribedEvents []string
 
+	if instance.Paused {
+		i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Attempt to connect while paused", instance.Id)
+		return nil, "", "", ErrInstancePaused
+	}
+
 	i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Processing subscribe events: %v", instance.Id, data.Subscribe)
 
 	if len(data.Subscribe) == 0 {
@@ -270,6 +293,8 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance already running, settings updated without restarting client", instance.Id)
 	}
 
+	_ = i.TouchActivity(instance)
+
 	// logger.LogInfo("Waiting 1 seconds")
 	// time.Sleep(1000 * time.Millisecond)
 
@@ -290,12 +315,22 @@ func (i instances) Reconnect(instance *instance_model.Instance) error {
 		return err
 	}
 
-	return i.whatsmeowService.ReconnectClient(instance.Id)
+	err = i.whatsmeowService.ReconnectClient(instance.Id)
+	if err != nil {
+		return err
+	}
+
+	_ = i.TouchActivity(instance)
+	return nil
 }
 
 func (i instances) Disconnect(instance *instance_model.Instance) (*instance_model.Instance, error) {
 	client, err := i.ensureClientConnected(instance.Id)
 	if err != nil {
+		if errors.Is(err, ErrInstancePaused) {
+			i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance paused, ignoring disconnect request", instance.Id)
+			return instance, nil
+		}
 		return instance, err
 	}
 
@@ -368,9 +403,74 @@ func (i instances) Logout(instance *instance_model.Instance) (*instance_model.In
 	return instance, fmt.Errorf("ignoring logout as it was not connected")
 }
 
+func (i instances) Pause(instance *instance_model.Instance) (*instance_model.Instance, error) {
+	if instance.Paused {
+		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance already paused", instance.Id)
+		return instance, nil
+	}
+
+	instance.Paused = true
+	instance.Connected = false
+	instance.DisconnectReason = "Paused"
+
+	if err := i.instanceRepository.Update(instance); err != nil {
+		return instance, err
+	}
+
+	if killChan, ok := i.killChannel[instance.Id]; ok {
+		select {
+		case killChan <- true:
+		case <-time.After(5 * time.Second):
+		}
+		delete(i.killChannel, instance.Id)
+	}
+
+	if client, ok := i.clientPointer[instance.Id]; ok && client != nil {
+		client.Disconnect()
+	}
+	delete(i.clientPointer, instance.Id)
+
+	i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance paused successfully", instance.Id)
+	return instance, nil
+}
+
+func (i instances) Resume(instance *instance_model.Instance) (*instance_model.Instance, error) {
+	if !instance.Paused {
+		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance not paused, skipping resume", instance.Id)
+		return instance, nil
+	}
+
+	instance.Paused = false
+	instance.DisconnectReason = ""
+
+	if err := i.instanceRepository.Update(instance); err != nil {
+		return instance, err
+	}
+
+	err := i.whatsmeowService.StartInstance(instance.Id)
+	if err != nil {
+		return instance, err
+	}
+
+	_ = i.TouchActivity(instance)
+
+	i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance resumed successfully", instance.Id)
+	return instance, nil
+}
+
 func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, error) {
 	client, err := i.ensureClientConnected(instance.Id)
 	if err != nil {
+		if errors.Is(err, ErrInstancePaused) {
+			return &StatusStruct{
+				Connected:      false,
+				LoggedIn:       false,
+				myJid:          nil,
+				Name:           "",
+				Paused:         true,
+				LastActivityAt: instance.LastActivityAt,
+			}, nil
+		}
 		return nil, err
 	}
 
@@ -385,10 +485,12 @@ func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, err
 	}
 
 	status := &StatusStruct{
-		Connected: isConnected,
-		LoggedIn:  isLoggedIn,
-		myJid:     myJid,
-		Name:      name,
+		Connected:      isConnected,
+		LoggedIn:       isLoggedIn,
+		myJid:          myJid,
+		Name:           name,
+		Paused:         instance.Paused,
+		LastActivityAt: instance.LastActivityAt,
 	}
 
 	return status, nil
@@ -428,7 +530,12 @@ func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, erro
 }
 
 func (i instances) Pair(data *PairStruct, instance *instance_model.Instance) (*PairReturnStruct, error) {
-	code, err := i.clientPointer[instance.Id].PairPhone(context.Background(), data.Phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	client, err := i.ensureClientConnected(instance.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	code, err := client.PairPhone(context.Background(), data.Phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		i.loggerWrapper.GetLogger(instance.Id).LogError("[%s] something went wrong calling pair phone", instance.Id)
 	}
@@ -598,6 +705,10 @@ func (i instances) ForceReconnect(instanceId string, number string) error {
 	instance, err := i.instanceRepository.GetInstanceByID(instanceId)
 	if err != nil {
 		return err
+	}
+
+	if instance.Paused {
+		return ErrInstancePaused
 	}
 
 	subscribedEvents := strings.Split(instance.Events, ",")
@@ -796,6 +907,23 @@ func (i instances) UpdateAdvancedSettings(instanceId string, settings *instance_
 	}
 
 	i.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Advanced settings updated successfully", instanceId)
+	return nil
+}
+
+func (i instances) TouchActivity(instance *instance_model.Instance) error {
+	if instance == nil {
+		return fmt.Errorf("instance reference is required")
+	}
+
+	err := i.whatsmeowService.TouchActivity(instance.Id)
+	if err != nil {
+		i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Failed to update last activity: %v", instance.Id, err)
+		return err
+	}
+
+	now := time.Now().UTC()
+	instance.LastActivityAt = &now
+
 	return nil
 }
 

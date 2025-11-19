@@ -6,6 +6,7 @@ import (
 	"github.com/EvolutionAPI/evolution-go/pkg/config"
 	instance_service "github.com/EvolutionAPI/evolution-go/pkg/instance/service"
 	"github.com/gin-gonic/gin"
+	"github.com/gomessguii/logger"
 )
 
 type Middleware interface {
@@ -32,6 +33,10 @@ func (m middleware) Auth(ctx *gin.Context) {
 	}
 
 	ctx.Set("instance", instance)
+
+	if err := m.instanceService.TouchActivity(instance); err != nil {
+		logger.LogWarn("Failed to update instance activity: %v", err)
+	}
 
 	ctx.Next()
 }

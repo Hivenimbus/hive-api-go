@@ -1,6 +1,7 @@
 package instance_handler
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -17,6 +18,8 @@ type InstanceHandler interface {
 	Reconnect(ctx *gin.Context)
 	Disconnect(ctx *gin.Context)
 	Logout(ctx *gin.Context)
+	Pause(ctx *gin.Context)
+	Resume(ctx *gin.Context)
 	Delete(ctx *gin.Context)
 	Status(ctx *gin.Context)
 	Qr(ctx *gin.Context)
@@ -134,7 +137,11 @@ func (i *instanceHandler) Connect(ctx *gin.Context) {
 
 	instance, jid, eventString, err := i.instanceService.Connect(data, instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -169,7 +176,11 @@ func (i *instanceHandler) Reconnect(ctx *gin.Context) {
 
 	err := i.instanceService.Reconnect(instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -196,7 +207,11 @@ func (i *instanceHandler) Disconnect(ctx *gin.Context) {
 
 	updateInstance, err := i.instanceService.Disconnect(instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -225,12 +240,72 @@ func (i *instanceHandler) Logout(ctx *gin.Context) {
 
 	updateInstance, err := i.instanceService.Logout(instance)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
 	ctx.Set("instance", updateInstance)
 
+	ctx.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
+// Pause instance connection
+// @Summary Pause instance
+// @Description Temporarily pauses the instance without invalidating the WhatsApp session
+// @Tags Instance
+// @Accept json
+// @Produce json
+// @Success 200 {object} gin.H "Instance paused successfully"
+// @Failure 500 {object} gin.H "Internal server error"
+// @Router /instance/pause [post]
+func (i *instanceHandler) Pause(ctx *gin.Context) {
+	getInstance := ctx.MustGet("instance")
+
+	instance, ok := getInstance.(*instance_model.Instance)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "instance not found"})
+		return
+	}
+
+	updatedInstance, err := i.instanceService.Pause(instance)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.Set("instance", updatedInstance)
+	ctx.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
+// Resume instance connection
+// @Summary Resume instance
+// @Description Resumes a previously paused instance reusing the stored WhatsApp session
+// @Tags Instance
+// @Accept json
+// @Produce json
+// @Success 200 {object} gin.H "Instance resumed successfully"
+// @Failure 500 {object} gin.H "Internal server error"
+// @Router /instance/resume [post]
+func (i *instanceHandler) Resume(ctx *gin.Context) {
+	getInstance := ctx.MustGet("instance")
+
+	instance, ok := getInstance.(*instance_model.Instance)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "instance not found"})
+		return
+	}
+
+	updatedInstance, err := i.instanceService.Resume(instance)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.Set("instance", updatedInstance)
 	ctx.JSON(http.StatusOK, gin.H{"message": "success"})
 }
 
@@ -281,7 +356,11 @@ func (i *instanceHandler) Qr(ctx *gin.Context) {
 
 	qrcode, err := i.instanceService.GetQr(instance)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -322,7 +401,11 @@ func (i *instanceHandler) Pair(ctx *gin.Context) {
 
 	pairingCode, err := i.instanceService.Pair(data, instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -522,7 +605,11 @@ func (i *instanceHandler) ForceReconnect(ctx *gin.Context) {
 
 	err = i.instanceService.ForceReconnect(instanceId, number)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, instance_service.ErrInstancePaused) {
+			status = http.StatusConflict
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -2,6 +2,7 @@ package instance_repository
 
 import (
 	"fmt"
+	"time"
 
 	instance_model "github.com/EvolutionAPI/evolution-go/pkg/instance/model"
 	"github.com/gomessguii/logger"
@@ -32,6 +33,7 @@ type InstanceRepository interface {
 	Delete(instanceId string) error
 	GetAdvancedSettings(instanceId string) (*instance_model.AdvancedSettings, error)
 	UpdateAdvancedSettings(instanceId string, settings *instance_model.AdvancedSettings) error
+	UpdateLastActivity(instanceId string, lastActivity time.Time) error
 }
 
 type instanceRepository struct {
@@ -84,7 +86,7 @@ func (i *instanceRepository) GetInstanceByID(instanceId string) (*instance_model
 
 func (i *instanceRepository) GetConnectedInstanceByID(instanceId string) (*instance_model.Instance, error) {
 	var instance instance_model.Instance
-	err := i.db.Where("id = ? AND connected = ?", instanceId, true).First(&instance).Error
+	err := i.db.Where("id = ? AND connected = ? AND paused = ?", instanceId, true, false).First(&instance).Error
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +120,7 @@ func (i *instanceRepository) UpdateJid(userId string, jid string) error {
 
 func (i *instanceRepository) GetAllConnectedInstances() ([]*instance_model.Instance, error) {
 	var instances []*instance_model.Instance
-	err := i.db.Where("connected = ?", true).Find(&instances).Error
+	err := i.db.Where("connected = ? AND paused = ?", true, false).Find(&instances).Error
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +130,7 @@ func (i *instanceRepository) GetAllConnectedInstances() ([]*instance_model.Insta
 
 func (i *instanceRepository) GetAllConnectedInstancesByClientName(clientName string) ([]*instance_model.Instance, error) {
 	var instances []*instance_model.Instance
-	err := i.db.Where("connected = ? AND client_name = ?", true, clientName).Find(&instances).Error
+	err := i.db.Where("connected = ? AND paused = ? AND client_name = ?", true, false, clientName).Find(&instances).Error
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +216,12 @@ func (i *instanceRepository) UpdateAdvancedSettings(instanceId string, settings 
 	}
 
 	return nil
+}
+
+func (i *instanceRepository) UpdateLastActivity(instanceId string, lastActivity time.Time) error {
+	return i.db.Model(&instance_model.Instance{}).
+		Where("id = ?", instanceId).
+		Update("last_activity_at", lastActivity).Error
 }
 
 func NewInstanceRepository(db *gorm.DB) InstanceRepository {

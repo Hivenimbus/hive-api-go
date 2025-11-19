@@ -63,6 +63,17 @@ POSTGRES_USERS_DB=postgresql://user:pass@host:5432/evogo_users?sslmode=disable
 | `WEBHOOKFILES` | `true` | Enviar URLs de mídia em webhooks |
 | `QRCODE_MAX_COUNT` | `5` | Tentativas máximas de QR Code |
 | `CHECK_USER_EXISTS` | `true` | Validar destinatário antes de enviar |
+| `INSTANCE_IDLE_TIMEOUT_MINUTES` | `0` | Minutos sem atividade antes de emitir evento `IdleTimeout` (0 desativa) |
+
+**Dicas para `INSTANCE_IDLE_TIMEOUT_MINUTES`:**
+- Valores comuns: `15`, `30`, `60`. Quanto menor, mais rápido o evento `IdleTimeout` dispara; quanto maior, menos sensível.
+- Sempre que o valor é `0` (ou a variável não é definida), o monitor permanece desligado e nenhum evento é disparado.
+- Assim que você definir um número > 0, todas as instâncias começam a registrar `lastActivityAt` automaticamente. Use esse timestamp para depuração ou relatórios.
+- Combine com o endpoint `/instance/pause` para hibernação automática:
+  1. Defina `INSTANCE_IDLE_TIMEOUT_MINUTES=30`
+  2. Assine o evento `IdleTimeout`
+  3. Ao receber o evento, execute `POST /instance/pause`
+  4. Libere um botão “Retomar” que chama `POST /instance/resume`
 
 ---
 

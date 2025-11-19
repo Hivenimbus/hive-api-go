@@ -140,6 +140,19 @@
 
 ---
 
+# Unreleased
+
+### 🆕 Novidades
+- **Hibernação de instâncias**: novos endpoints `POST /instance/pause` e `POST /instance/resume` permitem desligar o cliente temporariamente sem perder a sessão.
+- **Estados adicionais**: campos `paused` e `lastActivityAt` agora aparecem nos retornos da API e ajudam a auditar o ciclo de vida.
+- **Monitor de inatividade**: configure `INSTANCE_IDLE_TIMEOUT_MINUTES` para receber eventos `IdleTimeout` e orquestrar pausas automáticas.
+
+### 📘 Documentação
+- Atualização completa da wiki descrevendo o fluxo de pausa/retomada, payload do evento `IdleTimeout` e exemplos de automação.
+- Referência de variáveis documenta o novo `INSTANCE_IDLE_TIMEOUT_MINUTES`, com dicas práticas de configuração.
+
+---
+
 ## v0.2.0
 
 ### 🆕 New Features

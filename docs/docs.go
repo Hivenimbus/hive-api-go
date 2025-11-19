@@ -940,6 +940,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/instance/pause": {
+            "post": {
+                "description": "Pause instance connection",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instance"
+                ],
+                "summary": "Pause instance",
+                "responses": {
+                    "200": {
+                        "description": "Instance paused successfully",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    }
+                }
+            }
+        },
+        "/instance/resume": {
+            "post": {
+                "description": "Resume a previously paused instance",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Instance"
+                ],
+                "summary": "Resume instance",
+                "responses": {
+                    "200": {
+                        "description": "Instance resumed successfully",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/gin.H"
+                        }
+                    }
+                }
+            }
+        },
         "/instance/pair": {
             "post": {
                 "description": "Request pairing code",

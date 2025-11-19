@@ -87,6 +87,18 @@ true = Conectado e funcionando
 false = Desconectado
 ```
 
+**paused** - Hibernação ativa?
+```
+true = Instância hibernada manualmente ou por inatividade
+false = Instância livre para conectar e operar
+```
+
+**lastActivityAt** - Última atividade
+```
+Timestamp ISO8601 registrado toda vez que a API ou o WhatsApp do cliente gera atividade.
+Usado pelo monitor de inatividade.
+```
+
 **qrcode** - QR Code para conectar
 ```
 Formato: imagem_base64|codigo_texto
@@ -294,6 +306,83 @@ Resposta:
 
 **Não precisa de QR Code!** A sessão já está salva.
 
+### 5.1 Pausar (Hibernar)
+
+**Endpoint**: `POST /instance/pause`
+
+**O que acontece**:
+1. Envia um sinal para encerrar o WebSocket atual
+2. Mantém todas as credenciais salvas com segurança
+3. Impede que reconexões automáticas sejam disparadas
+4. Atualiza o campo `paused=true`
+
+#### Exemplo de requisição
+```bash
+POST /instance/pause
+Headers: apikey: token-vendas
+```
+
+#### Resposta
+```json
+{
+  "message": "success"
+}
+```
+
+#### O que acontece nos bastidores
+- O cliente whatsmeow é desconectado com segurança.
+- Os canais internos (`killChannel`) são limpos para evitar reinícios automáticos.
+- `lastActivityAt` registra o momento em que a pausa foi solicitada (útil para auditoria).
+- As rotas protegidas passam a retornar HTTP 409 caso você tente enviar mensagens enquanto a instância estiver pausada.
+
+**Quando usar**:
+- Enquanto o cliente não estiver disparando mensagens
+- Para liberar recursos de CPU/RAM sem perder a sessão
+- Antes de desligar um worker específico
+- Para atender o evento de inatividade `IdleTimeout` de forma automática
+
+### 5.2 Retomar
+
+**Endpoint**: `POST /instance/resume`
+
+**O que acontece**:
+1. Remove o estado `paused`
+2. Reinicia o cliente WhatsApp reaproveitando a sessão
+3. Atualiza `lastActivityAt` para agora
+
+#### Exemplo de requisição
+```bash
+POST /instance/resume
+Headers: apikey: token-vendas
+```
+
+#### Resposta
+```json
+{
+  "message": "success"
+}
+```
+
+#### Check-list recomendado
+1. Confirme que a instância aparece como `paused=true` no `/instance/status`.
+2. Envie o `resume` e aguarde ~2 segundos para o cliente subir.
+3. Consulte `/instance/status` novamente para garantir `connected=true`.
+4. Execute um teste de envio para validar a sessão reaproveitada.
+
+**Quando usar**:
+- Assim que precisar voltar a enviar/receber mensagens
+- Após uma pausa automática por inatividade
+- Depois de atualizar configurações enquanto estava pausado
+
+### 5.3 Fluxo automático sugerido
+
+1. Configure `INSTANCE_IDLE_TIMEOUT_MINUTES` com o tempo máximo de ociosidade aceitável.
+2. Assine o evento `IdleTimeout` no webhook/RabbitMQ/NATS.
+3. Ao receber o evento, chame `POST /instance/pause` para hibernar.
+4. Quando o usuário quiser voltar, ofereça um botão de “Retomar” que chama `POST /instance/resume`.
+
+> Dica: registre na sua aplicação o momento em que o `IdleTimeout` chegou para mostrar ao usuário há quanto tempo ele está pausado.
+
 ### 6. Desconectar
 
 **Endpoint**: `POST /instance/disconnect`
@@ -386,6 +475,35 @@ false = Normal (recebe tudo)
 true = Não processa atualizações de status
 false = Normal (recebe tudo)
 ```
+
+### Monitor de Inatividade
+
+- Configure o tempo limite via env `INSTANCE_IDLE_TIMEOUT_MINUTES` (0 = desativado).
+- Toda requisição autenticada e cada evento do WhatsApp executam um **TouchActivity** automático, atualizando `lastActivityAt`.
+- Quando o limite é excedido, o evento **IdleTimeout** é enviado para o webhook/RabbitMQ/NATS com o tempo parado em minutos.
+- Use esse evento para pausar automaticamente (`POST /instance/pause`) ou apenas alertar o usuário.
+
+#### Payload do evento `IdleTimeout`
+```json
+{
+  "event": "IdleTimeout",
+  "data": {
+    "idleMinutes": 45,
+    "lastActivity": "2025-11-19T12:34:56Z",
+    "timeoutTarget": 30
+  },
+  "instanceToken": "token-vendas",
+  "instanceId": "f1d2d3",
+  "instanceName": "vendas"
+}
+```
+
+#### Estratégias possíveis
+- **Pause automático**: chame o endpoint `/instance/pause` assim que receber o evento.
+- **Alertas**: notifique o operador por e-mail/Slack informando quantos minutos a instância está ociosa.
+- **Dashboards**: armazene `idleMinutes` em uma tabela para acompanhar ociosidade média e planejar escalabilidade.
+
+> Importante: o monitor roda a cada 1 minuto. Se o timeout for 30, uma instância será considerada ociosa entre 30 e 31 minutos após a última atividade.
 
 ### Como Configurar
 

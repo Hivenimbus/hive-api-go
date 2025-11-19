@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/image/webp"
@@ -58,6 +59,7 @@ type WhatsmeowService interface {
 	ForceUpdateJid(instanceId string, number string) error
 	UpdateInstanceSettings(instanceId string) error
 	UpdateInstanceAdvancedSettings(instanceId string) error
+	TouchActivity(instanceId string) error
 }
 
 type clientVersion struct {
@@ -85,7 +87,15 @@ type whatsmeowService struct {
 	processedMessages  *cache.Cache
 	natsProducer       producer_interfaces.Producer
 	loggerWrapper      *logger_wrapper.LoggerManager
+	activityMu         sync.RWMutex
+	lastActivity       map[string]time.Time
+	idleNotified       map[string]bool
+	lastPersisted      map[string]time.Time
 }
+
+var ErrInstancePaused = errors.New("instance is paused")
+
+const activityPersistInterval = 30 * time.Second
 
 type MyClient struct {
 	service            WhatsmeowService
@@ -193,6 +203,11 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	instance, err := w.instanceRepository.GetInstanceByID(instanceId)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %v", err)
+	}
+
+	if instance.Paused {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Reconnect requested while paused", instanceId)
+		return ErrInstancePaused
 	}
 
 	instance.Connected = false
@@ -766,6 +781,17 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				go mycli.service.SendToGlobalQueues(postMap["event"].(string), values, mycli.userID)
 			}
 
+			instanceState, err := w.instanceRepository.GetInstanceByID(cd.Instance.Id)
+			if err != nil {
+				w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Failed to fetch instance after kill signal: %v", cd.Instance.Id, err)
+			} else {
+				cd.Instance = instanceState
+				if instanceState.Paused {
+					w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Instance paused, skipping automatic restart", cd.Instance.Id)
+					return
+				}
+			}
+
 			// restart client
 			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Restarting client", cd.Instance.Id)
 			w.StartClient(cd)
@@ -832,6 +858,10 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	postMap := make(map[string]interface{})
 	postMap["data"] = rawEvt
 	doWebhook := false
+
+	if err := mycli.service.TouchActivity(userID); err != nil {
+		mycli.loggerWrapper.GetLogger(userID).LogDebug("[%s] Failed to register activity: %v", userID, err)
+	}
 
 	switch evt := rawEvt.(type) {
 	case *events.AppStateSyncComplete:
@@ -2013,6 +2043,11 @@ func (w whatsmeowService) StartInstance(instanceId string) error {
 		return err
 	}
 
+	if instance.Paused {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Instance is paused; skipping client start", instanceId)
+		return ErrInstancePaused
+	}
+
 	if instance.Proxy == "" && w.config.ProxyHost != "" && w.config.ProxyPort != "" && w.config.ProxyUsername != "" && w.config.ProxyPassword != "" {
 		instance.Proxy = fmt.Sprintf(`{"host": "%s", "port": "%s", "username": "%s", "password": "%s"}`, w.config.ProxyHost, w.config.ProxyPort, w.config.ProxyUsername, w.config.ProxyPassword)
 
@@ -2408,6 +2443,111 @@ func (w whatsmeowService) UpdateInstanceAdvancedSettings(instanceId string) erro
 	return nil
 }
 
+func (w *whatsmeowService) TouchActivity(instanceId string) error {
+	now := time.Now().UTC()
+
+	w.activityMu.Lock()
+	w.lastActivity[instanceId] = now
+	w.idleNotified[instanceId] = false
+	lastPersist := w.lastPersisted[instanceId]
+	if now.Sub(lastPersist) < activityPersistInterval {
+		w.activityMu.Unlock()
+		return nil
+	}
+	w.lastPersisted[instanceId] = now
+	w.activityMu.Unlock()
+
+	if err := w.instanceRepository.UpdateLastActivity(instanceId, now); err != nil {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to persist last activity: %v", instanceId, err)
+		return err
+	}
+
+	return nil
+}
+
+func (w *whatsmeowService) startIdleMonitor() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		w.checkIdleInstances()
+	}
+}
+
+func (w *whatsmeowService) checkIdleInstances() {
+	timeout := time.Duration(w.config.InstanceIdleTimeoutMinutes) * time.Minute
+	if timeout <= 0 {
+		return
+	}
+
+	now := time.Now().UTC()
+	type idleCandidate struct {
+		id   string
+		idle time.Duration
+	}
+
+	w.activityMu.Lock()
+	candidates := make([]idleCandidate, 0)
+	for id, last := range w.lastActivity {
+		if last.IsZero() {
+			continue
+		}
+		idle := now.Sub(last)
+		if idle >= timeout && !w.idleNotified[id] {
+			w.idleNotified[id] = true
+			candidates = append(candidates, idleCandidate{id: id, idle: idle})
+		}
+	}
+	w.activityMu.Unlock()
+
+	for _, candidate := range candidates {
+		w.handleIdleInstance(candidate.id, candidate.idle)
+	}
+}
+
+func (w *whatsmeowService) handleIdleInstance(instanceId string, idle time.Duration) {
+	instance, err := w.instanceRepository.GetInstanceByID(instanceId)
+	if err != nil {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to load instance for idle monitor: %v", instanceId, err)
+		return
+	}
+
+	if instance.Paused {
+		return
+	}
+
+	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance idle for %s", instanceId, idle)
+
+	idleMinutes := int(idle.Minutes())
+	if idleMinutes <= 0 {
+		idleMinutes = 1
+	}
+
+	postMap := map[string]interface{}{
+		"event": "IdleTimeout",
+		"data": map[string]interface{}{
+			"idleMinutes":   idleMinutes,
+			"lastActivity":  instance.LastActivityAt,
+			"timeoutTarget": w.config.InstanceIdleTimeoutMinutes,
+		},
+		"instanceToken": instance.Token,
+		"instanceId":    instance.Id,
+		"instanceName":  instance.Name,
+	}
+
+	queueName := strings.ToLower(fmt.Sprintf("%s.%s", instance.Id, postMap["event"]))
+	values, err := json.Marshal(postMap)
+	if err != nil {
+		w.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to marshal idle event: %v", instanceId, err)
+		return
+	}
+
+	go w.CallWebhook(instance, queueName, values)
+	if w.config.AmqpGlobalEnabled || w.config.NatsGlobalEnabled {
+		go w.SendToGlobalQueues(postMap["event"].(string), values, instance.Id)
+	}
+}
+
 func (w whatsmeowService) ClearInstanceCache(instanceId string, token string) error {
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Clearing instance cache - Token: %s", instanceId, token)
 
@@ -2440,6 +2580,13 @@ func (w whatsmeowService) ClearInstanceCache(instanceId string, token string) er
 	}
 
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance cache completely cleared", instanceId)
+
+	w.activityMu.Lock()
+	delete(w.lastActivity, instanceId)
+	delete(w.lastPersisted, instanceId)
+	delete(w.idleNotified, instanceId)
+	w.activityMu.Unlock()
+
 	return nil
 }
 
@@ -2460,7 +2607,7 @@ func NewWhatsmeowService(
 	natsProducer producer_interfaces.Producer,
 	loggerWrapper *logger_wrapper.LoggerManager,
 ) WhatsmeowService {
-	return &whatsmeowService{
+	service := &whatsmeowService{
 		instanceRepository: instanceRepository,
 		authDB:             authDB,
 		messageRepository:  messageRepository,
@@ -2479,7 +2626,16 @@ func NewWhatsmeowService(
 		processedMessages:  cache.New(30*time.Minute, 1*time.Hour),
 		natsProducer:       natsProducer,
 		loggerWrapper:      loggerWrapper,
+		lastActivity:       make(map[string]time.Time),
+		lastPersisted:      make(map[string]time.Time),
+		idleNotified:       make(map[string]bool),
 	}
+
+	if config.InstanceIdleTimeoutMinutes > 0 {
+		go service.startIdleMonitor()
+	}
+
+	return service
 }
 
 // cleanSenderID remove a parte ":numero" do sender ID para exibir apenas o remoteJid correto

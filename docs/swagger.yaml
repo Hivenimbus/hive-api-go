@@ -1058,6 +1058,44 @@ paths:
       summary: Logout from instance
       tags:
       - Instance
+  /instance/pause:
+    post:
+      consumes:
+      - application/json
+      description: Pause instance connection
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Instance paused successfully
+          schema:
+            $ref: '#/definitions/gin.H'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Pause instance
+      tags:
+      - Instance
+  /instance/resume:
+    post:
+      consumes:
+      - application/json
+      description: Resume a previously paused instance
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Instance resumed successfully
+          schema:
+            $ref: '#/definitions/gin.H'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/gin.H'
+      summary: Resume instance
+      tags:
+      - Instance
   /instance/pair:
     post:
       consumes:
