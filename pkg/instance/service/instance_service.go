@@ -59,6 +59,7 @@ type ProxyConfig struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
 	Host     string `json:"host"`
+	Protocol string `json:"protocol"`
 }
 
 type CreateStruct struct {
@@ -105,6 +106,7 @@ type SetProxyStruct struct {
 	Port     string `json:"port" validate:"required"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Protocol string `json:"protocol"`
 }
 
 type ForceReconnectStruct struct {
@@ -560,6 +562,7 @@ func (i instances) SetProxyFromStruct(id string, data *SetProxyStruct) error {
 		Port:     data.Port,
 		Username: data.Username,
 		Password: data.Password,
+		Protocol: data.Protocol,
 	}
 
 	return i.SetProxy(id, proxyConfig)

@@ -141,6 +141,7 @@ type ProxyConfig struct {
 	Password string `json:"password"`
 	Port     string `json:"port"`
 	Username string `json:"username"`
+	Protocol string `json:"protocol"`
 }
 
 func (w whatsmeowService) ReconnectClient(instanceId string) error {
@@ -414,12 +415,29 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			proxyPassword = w.config.ProxyPassword
 		}
 
-		proxy, err := utils.CreateSocks5Proxy(proxyHost, proxyPort, proxyUsername, proxyPassword)
+		protocol := proxyConfig.Protocol
+		if protocol == "" {
+			if strings.Contains(proxyHost, "://") {
+				parts := strings.Split(proxyHost, "://")
+				protocol = parts[0]
+				proxyHost = parts[1]
+			} else {
+				protocol = "http"
+			}
+		}
+
+		var proxyURL string
+		if proxyUsername != "" && proxyPassword != "" {
+			proxyURL = fmt.Sprintf("%s://%s:%s@%s:%s", protocol, proxyUsername, proxyPassword, proxyHost, proxyPort)
+		} else {
+			proxyURL = fmt.Sprintf("%s://%s:%s", protocol, proxyHost, proxyPort)
+		}
+
+		err = client.SetProxyAddress(proxyURL)
 		if err != nil {
 			w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Proxy error, continuing without proxy: %v", cd.Instance.Id, err)
 		} else {
-			client.SetSOCKSProxy(proxy)
-			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Proxy enabled", cd.Instance.Id)
+			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Proxy enabled (%s)", cd.Instance.Id, protocol)
 		}
 	}
 
