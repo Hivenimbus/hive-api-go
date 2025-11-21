@@ -275,7 +275,7 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 
 	// Aguarda um pouco para garantir que o cliente tenha tempo de inicializar e gerar o QR code (especialmente com proxy)
 	if !isInstanceRunning {
-		time.Sleep(2 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 	return instance, instance.Jid, eventString, nil
