@@ -537,6 +537,9 @@ func (i instances) SetProxy(id string, proxyConfig *ProxyConfig) error {
 
 	instance.Proxy = string(proxyJSON)
 
+	// Limpa o QR code para evitar uso de código antigo/inválido
+	instance.Qrcode = ""
+
 	// Update instance in database
 	err = i.instanceRepository.Update(instance)
 	if err != nil {
@@ -575,6 +578,9 @@ func (i instances) RemoveProxy(id string) error {
 	}
 
 	instance.Proxy = ""
+
+	// Limpa o QR code para evitar uso de código antigo/inválido
+	instance.Qrcode = ""
 
 	err = i.instanceRepository.Update(instance)
 	if err != nil {

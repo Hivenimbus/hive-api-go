@@ -198,6 +198,14 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 
 	instance.Connected = false
 	instance.DisconnectReason = "Reconnecting"
+
+	// Limpa o QR code para garantir que não retornemos um código antigo
+	instance.Qrcode = ""
+	err = w.instanceRepository.UpdateQrcode(instanceId, "")
+	if err != nil {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to clear qrcode: %v", instanceId, err)
+	}
+
 	err = w.instanceRepository.UpdateConnected(instanceId, false, "Reconnecting")
 	if err != nil {
 		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to update disconnect status: %v", instanceId, err)
