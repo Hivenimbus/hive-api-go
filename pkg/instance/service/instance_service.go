@@ -173,7 +173,6 @@ func (i instances) Create(data *CreateStruct) (*instance_model.Instance, error) 
 		Proxy:      string(proxyJson),
 		Connected:  false,
 		ClientName: i.config.ClientName,
-		Qrcode:     "", // Garante que o QR code comece limpo
 	}
 
 	// Set advanced settings if provided
@@ -273,10 +272,16 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance already running, settings updated without restarting client", instance.Id)
 	}
 
-	// Aguarda um pouco para garantir que o cliente tenha tempo de inicializar e gerar o QR code (especialmente com proxy)
-	if !isInstanceRunning {
-		time.Sleep(2 * time.Second)
-	}
+	// logger.LogInfo("Waiting 1 seconds")
+	// time.Sleep(1000 * time.Millisecond)
+
+	// if i.clientPointer[instance.Id] != nil {
+	// 	if !i.clientPointer[instance.Id].IsConnected() {
+	// 		return instance, "", "", fmt.Errorf("failed to connect")
+	// 	}
+	// } else {
+	// 	return instance, "", "", fmt.Errorf("failed to connect")
+	// }
 
 	return instance, instance.Jid, eventString, nil
 }
