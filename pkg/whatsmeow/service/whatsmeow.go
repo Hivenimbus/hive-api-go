@@ -1414,15 +1414,32 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 				}
 
-				messageMap, ok := dataMap["Message"].(map[string]interface{})
+				// Tenta recuperar o mapa de mensagem verificando "Message" ou "message"
+				var messageKey string
+				var messageMap map[string]interface{}
+				var ok bool
+
+				if m, found := dataMap["Message"].(map[string]interface{}); found {
+					messageKey = "Message"
+					messageMap = m
+					ok = true
+				} else if m, found := dataMap["message"].(map[string]interface{}); found {
+					messageKey = "message"
+					messageMap = m
+					ok = true
+				}
+
 				if !ok {
+					// Se não encontrar, cria novo e usa "Message" como padrão
+					messageKey = "Message"
 					messageMap = make(map[string]interface{})
 				}
 
 				// Only process storage if download was successful
 				if err == nil && len(data) > 0 {
+					fileName := evt.Info.ID + extension
+
 					if mycli.config.MinioEnabled {
-						fileName := evt.Info.ID + extension
 						storageStart := time.Now()
 
 						mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Uploading to S3/Minio - ID: %s, FileName: %s, Size: %d bytes", mycli.userID, evt.Info.ID, fileName, len(data))
@@ -1439,6 +1456,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] S3/Minio upload successful - ID: %s, Size: %d bytes, Duration: %v, URL: %s", mycli.userID, evt.Info.ID, len(data), storageDuration, mediaURL)
 							messageMap["mediaUrl"] = mediaURL
 							messageMap["mimetype"] = mimeType
+							messageMap["fileName"] = fileName
 						}
 					} else {
 						mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Encoding to base64 - ID: %s, Size: %d bytes", mycli.userID, evt.Info.ID, len(data))
@@ -1448,13 +1466,16 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						encodeDuration := time.Since(encodeStart)
 
 						mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Base64 encoding completed - ID: %s, Original: %d bytes, Encoded: %d chars, Duration: %v", mycli.userID, evt.Info.ID, len(data), len(encodeData), encodeDuration)
-						messageMap["base64"] = encodeData
+
+						messageMap["base64"] = fmt.Sprintf("data:%s;base64,%s", mimeType, encodeData)
+						messageMap["mimetype"] = mimeType
+						messageMap["fileName"] = fileName
 					}
 				} else {
 					mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Skipping media storage due to download failure - ID: %s", mycli.userID, evt.Info.ID)
 				}
 
-				dataMap["Message"] = messageMap
+				dataMap[messageKey] = messageMap
 			}
 		}
 
@@ -1468,23 +1489,38 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		delete(dataMap, "RawMessage")
 
-		if message, ok := dataMap["Message"].(map[string]interface{}); ok {
+		// Tenta recuperar "Message" ou "message" para processamento final
+		var message map[string]interface{}
+		var messageFound bool
+		var messageKey string
+
+		if m, ok := dataMap["Message"].(map[string]interface{}); ok {
+			message = m
+			messageFound = true
+			messageKey = "Message"
+		} else if m, ok := dataMap["message"].(map[string]interface{}); ok {
+			message = m
+			messageFound = true
+			messageKey = "message"
+		}
+
+		if messageFound {
 			if imageMessage, ok := message["imageMessage"].(map[string]interface{}); ok {
 				delete(imageMessage, "JPEGThumbnail")
 				message["imageMessage"] = imageMessage
-				dataMap["Message"] = message
+				dataMap[messageKey] = message
 			}
 
 			if videoMessage, ok := message["videoMessage"].(map[string]interface{}); ok {
 				delete(videoMessage, "JPEGThumbnail")
 				message["videoMessage"] = videoMessage
-				dataMap["Message"] = message
+				dataMap[messageKey] = message
 			}
 
 			if documentMessage, ok := message["documentMessage"].(map[string]interface{}); ok {
 				delete(documentMessage, "JPEGThumbnail")
 				message["documentMessage"] = documentMessage
-				dataMap["Message"] = message
+				dataMap[messageKey] = message
 			}
 		}
 
