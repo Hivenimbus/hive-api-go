@@ -1603,9 +1603,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		mycli.userInfoCache.Delete(mycli.Instance.Token)
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared for token: %s", mycli.userID, mycli.Instance.Token)
 
+		// Limpar JID e QRCode para forçar nova leitura de QR na reconexão
+		mycli.Instance.Jid = ""
+		mycli.Instance.Qrcode = ""
 		mycli.Instance.DisconnectReason = evt.Reason.String()
 		mycli.Instance.Connected = false
-		err := mycli.instanceRepository.UpdateConnected(mycli.Instance.Id, mycli.Instance.Connected, mycli.Instance.DisconnectReason)
+
+		// Usar Update para salvar todas as alterações (incluindo JID vazio)
+		err := mycli.instanceRepository.Update(mycli.Instance)
 		if err != nil {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.Instance.Id, err)
 		}
