@@ -2,6 +2,7 @@ package user_service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,8 +74,27 @@ type CheckUserCollection struct {
 }
 
 type CheckUserStruct struct {
-	Number    []string `json:"number"`
-	FormatJid *bool    `json:"formatJid,omitempty"`
+	Number    StringOrArray `json:"number"`
+	FormatJid *bool         `json:"formatJid,omitempty"`
+}
+
+type StringOrArray []string
+
+func (so *StringOrArray) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '[' {
+		var s []string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*so = StringOrArray(s)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	*so = StringOrArray([]string{s})
+	return nil
 }
 
 type GetAvatarStruct struct {
@@ -143,7 +163,10 @@ func (u *userService) ensureClientConnected(instanceId string) (*whatsmeow.Clien
 		return nil, errors.New("client disconnected")
 	}
 
-	u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Client successfully validated - Connected: %v", instanceId, client.IsConnected())
+	u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Client successfully validated - Connected: %v, LoggedIn: %v", instanceId, client.IsConnected(), client.IsLoggedIn())
+	if !client.IsLoggedIn() {
+		return nil, errors.New("client connected but not logged in")
+	}
 	return client, nil
 }
 
@@ -161,9 +184,26 @@ func (u *userService) GetUser(data *CheckUserStruct, instance *instance_model.In
 		}
 		jids = append(jids, jid)
 	}
-	resp, err := client.GetUserInfo(context.Background(), jids)
+
+	// Helper function to execute GetUserInfo with timeout
+	executeGetUserInfo := func() (map[types.JID]types.UserInfo, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return client.GetUserInfo(ctx, jids)
+	}
+
+	// First attempt
+	resp, err := executeGetUserInfo()
 	if err != nil {
-		return nil, err
+		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Failed to get user info (attempt 1): %v", instance.Id, err)
+		
+		// Retry if it's a timeout or temporary error
+		time.Sleep(1 * time.Second)
+		resp, err = executeGetUserInfo()
+		if err != nil {
+			u.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to get user info (attempt 2): %v", instance.Id, err)
+			return nil, err
+		}
 	}
 
 	uc := new(UserCollection)
@@ -206,15 +246,32 @@ func (u *userService) CheckUser(data *CheckUserStruct, instance *instance_model.
 	}
 
 	// First attempt with the requested formatJid setting
-	uc, shouldRetry := u.performCheckUser(client, data.Number, formatJid, instance.Id)
-	if !shouldRetry {
+	uc, shouldRetryFormat, err := u.performCheckUser(client, data.Number, formatJid, instance.Id)
+	if err != nil {
+		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Failed to check user (attempt 1): %v", instance.Id, err)
+		
+		// Retry if it's a timeout or temporary error
+		time.Sleep(1 * time.Second)
+		uc, shouldRetryFormat, err = u.performCheckUser(client, data.Number, formatJid, instance.Id)
+		if err != nil {
+			u.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to check user (attempt 2): %v", instance.Id, err)
+			return nil, err
+		}
+	}
+
+	if !shouldRetryFormat {
 		return uc, nil
 	}
 
 	// If formatJid was true and we got false results, retry with formatJid=false
 	if formatJid {
 		u.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Some users not found with formatJid=true, retrying with formatJid=false", instance.Id)
-		ucRetry, _ := u.performCheckUser(client, data.Number, false, instance.Id)
+		ucRetry, _, err := u.performCheckUser(client, data.Number, false, instance.Id)
+		if err != nil {
+			// If retry fails, just return the original result
+			u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Retry with formatJid=false failed: %v", instance.Id, err)
+			return uc, nil
+		}
 
 		// Merge results: use retry results for users that weren't found in first attempt
 		return u.mergeCheckUserResults(uc, ucRetry), nil
@@ -224,18 +281,21 @@ func (u *userService) CheckUser(data *CheckUserStruct, instance *instance_model.
 }
 
 // performCheckUser executes the actual user check with specified formatJid
-func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []string, formatJid bool, instanceId string) (*CheckUserCollection, bool) {
+func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []string, formatJid bool, instanceId string) (*CheckUserCollection, bool, error) {
 	// Use centralized function to prepare numbers for WhatsApp check
 	phoneNumbers, err := utils.PrepareNumbersForWhatsAppCheck(numbers, &formatJid)
 	if err != nil {
 		u.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to prepare numbers for WhatsApp check: %v", instanceId, err)
-		return nil, false
+		return nil, false, err
 	}
 
-	resp, err := client.IsOnWhatsApp(context.Background(), phoneNumbers)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := client.IsOnWhatsApp(ctx, phoneNumbers)
 	if err != nil {
 		u.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to check users on WhatsApp: %v", instanceId, err)
-		return nil, false
+		return nil, false, err
 	}
 
 	uc := new(CheckUserCollection)
@@ -284,7 +344,7 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 		}
 	}
 
-	return uc, shouldRetry
+	return uc, shouldRetry, nil
 }
 
 // mergeCheckUserResults merges results from two CheckUser attempts
