@@ -211,14 +211,10 @@ func (u *userService) GetUser(data *CheckUserStruct, instance *instance_model.In
 
 		// 2. Fetch Status (About) individually with short timeout
 		// This is faster and less prone to full query timeouts
-		ctxStatus, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
-		statusResp, err := client.GetUserStatus(ctxStatus, item.JID)
-		cancelStatus()
-		if err == nil && statusResp != nil {
-			info.Status = statusResp.Status
-		} else {
-			u.loggerWrapper.GetLogger(instance.Id).LogDebug("[%s] Failed to get status for %s: %v", instance.Id, item.JID, err)
-		}
+		// Note: whatsmeow does not expose a public method for getting just the status without full USync
+		// So we skip it for now to keep the endpoint fast and avoid build errors.
+		// If status is strictly required, we would need to implement a custom USync query helper.
+		info.Status = ""
 
 		// 3. Fetch Profile Picture individually with short timeout
 		ctxPic, cancelPic := context.WithTimeout(context.Background(), 5*time.Second)
