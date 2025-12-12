@@ -60,15 +60,16 @@ type UserCollection struct {
 }
 
 type User struct {
-	Query        string
-	IsInWhatsapp bool
-	JID          string
-	RemoteJID    string
-	LID          *string
-	VerifiedName string
-	PushName     string
-	FirstName    string
-	FullName     string
+	Query             string
+	IsInWhatsapp      bool
+	JID               string
+	RemoteJID         string
+	LID               *string
+	VerifiedName      string
+	PushName          string
+	FirstName         string
+	FullName          string
+	ProfilePictureUrl string
 }
 
 type CheckUserCollection struct {
@@ -264,7 +265,7 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 			shouldRetry = true
 		}
 
-		var pushName, firstName, fullName string
+		var pushName, firstName, fullName, profilePictureUrl string
 		if item.IsIn && client.Store.Contacts != nil {
 			if contact, err := client.Store.Contacts.GetContact(context.Background(), item.JID); err == nil && contact.Found {
 				pushName = contact.PushName
@@ -273,30 +274,41 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 			}
 		}
 
+		if item.IsIn {
+			pic, err := client.GetProfilePictureInfo(context.Background(), item.JID, &whatsmeow.GetProfilePictureParams{
+				Preview: true,
+			})
+			if err == nil && pic != nil {
+				profilePictureUrl = pic.URL
+			}
+		}
+
 		if item.VerifiedName != nil {
 			var msg = User{
-				Query:        item.Query,
-				IsInWhatsapp: item.IsIn,
-				JID:          fmt.Sprintf("%v", item.JID),
-				RemoteJID:    remoteJID,
-				LID:          lidStr,
-				VerifiedName: item.VerifiedName.Details.GetVerifiedName(),
-				PushName:     pushName,
-				FirstName:    firstName,
-				FullName:     fullName,
+				Query:             item.Query,
+				IsInWhatsapp:      item.IsIn,
+				JID:               fmt.Sprintf("%v", item.JID),
+				RemoteJID:         remoteJID,
+				LID:               lidStr,
+				VerifiedName:      item.VerifiedName.Details.GetVerifiedName(),
+				PushName:          pushName,
+				FirstName:         firstName,
+				FullName:          fullName,
+				ProfilePictureUrl: profilePictureUrl,
 			}
 			uc.Users = append(uc.Users, msg)
 		} else {
 			var msg = User{
-				Query:        item.Query,
-				IsInWhatsapp: item.IsIn,
-				JID:          fmt.Sprintf("%v", item.JID),
-				RemoteJID:    remoteJID,
-				LID:          lidStr,
-				VerifiedName: "",
-				PushName:     pushName,
-				FirstName:    firstName,
-				FullName:     fullName,
+				Query:             item.Query,
+				IsInWhatsapp:      item.IsIn,
+				JID:               fmt.Sprintf("%v", item.JID),
+				RemoteJID:         remoteJID,
+				LID:               lidStr,
+				VerifiedName:      "",
+				PushName:          pushName,
+				FirstName:         firstName,
+				FullName:          fullName,
+				ProfilePictureUrl: profilePictureUrl,
 			}
 			uc.Users = append(uc.Users, msg)
 		}
