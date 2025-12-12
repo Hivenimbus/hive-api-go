@@ -66,6 +66,9 @@ type User struct {
 	RemoteJID    string
 	LID          *string
 	VerifiedName string
+	PushName     string
+	FirstName    string
+	FullName     string
 }
 
 type CheckUserCollection struct {
@@ -261,6 +264,15 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 			shouldRetry = true
 		}
 
+		var pushName, firstName, fullName string
+		if item.IsIn && client.Store.Contacts != nil {
+			if contact, err := client.Store.Contacts.GetContact(context.Background(), item.JID); err == nil && contact.Found {
+				pushName = contact.PushName
+				firstName = contact.FirstName
+				fullName = contact.FullName
+			}
+		}
+
 		if item.VerifiedName != nil {
 			var msg = User{
 				Query:        item.Query,
@@ -269,6 +281,9 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 				RemoteJID:    remoteJID,
 				LID:          lidStr,
 				VerifiedName: item.VerifiedName.Details.GetVerifiedName(),
+				PushName:     pushName,
+				FirstName:    firstName,
+				FullName:     fullName,
 			}
 			uc.Users = append(uc.Users, msg)
 		} else {
@@ -279,6 +294,9 @@ func (u *userService) performCheckUser(client *whatsmeow.Client, numbers []strin
 				RemoteJID:    remoteJID,
 				LID:          lidStr,
 				VerifiedName: "",
+				PushName:     pushName,
+				FirstName:    firstName,
+				FullName:     fullName,
 			}
 			uc.Users = append(uc.Users, msg)
 		}
