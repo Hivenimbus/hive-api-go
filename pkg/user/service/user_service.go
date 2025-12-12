@@ -161,97 +161,80 @@ func (u *userService) GetUser(data *CheckUserStruct, instance *instance_model.In
 		}
 		jids = append(jids, jid)
 	}
-	var resp map[types.JID]types.UserInfo
-	var lastErr error
+	// Optimization: Skip heavy GetUserInfo call and fetch components individually
+	// This avoids timeouts on full usync queries
 
-	// Retry loop - try up to 2 times to avoid timeout issues
-	for i := 0; i < 2; i++ {
-		// Create a context with a timeout for each attempt (45 seconds)
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		
-		resp, lastErr = client.GetUserInfo(ctx, jids)
-		cancel() // Cancel context immediately to release resources
-
-		if lastErr == nil {
-			break
-		}
-		
-		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] GetUserInfo attempt %d failed: %v", instance.Id, i+1, lastErr)
-		
-		// If it's the last attempt, don't sleep
-		if i < 1 {
-			time.Sleep(1 * time.Second)
-		}
+	// 1. Check existence first using IsOnWhatsApp (lightweight)
+	var phoneNumbers []string
+	for _, jid := range jids {
+		phoneNumbers = append(phoneNumbers, jid.User)
 	}
 
-	// Fallback to IsOnWhatsApp if GetUserInfo fails (likely timeout)
-	if lastErr != nil {
-		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] GetUserInfo failed completely, falling back to basic IsOnWhatsApp check: %v", instance.Id, lastErr)
-		
-		// Convert JIDs to string for IsOnWhatsApp
-		var phoneNumbers []string
-		for _, jid := range jids {
-			phoneNumbers = append(phoneNumbers, jid.User)
-		}
-
-		basicResp, err := client.IsOnWhatsApp(context.Background(), phoneNumbers)
-		if err != nil {
-			return nil, fmt.Errorf("both GetUserInfo and IsOnWhatsApp failed: %v (original error: %v)", err, lastErr)
-		}
-
-		// Construct partial response from basic info
-		uc := new(UserCollection)
-		uc.Users = make(map[types.JID]UserInfo)
-
-		for _, item := range basicResp {
-			if !item.IsIn {
-				continue
-			}
-
-			// Try to get verified name if available in basic response
-			var vName *types.VerifiedName
-			if item.VerifiedName != nil {
-				vName = &types.VerifiedName{
-					Details: item.VerifiedName.Details,
-					Certificate: item.VerifiedName.Certificate,
-				}
-			}
-
-			info := UserInfo{
-				VerifiedName: vName,
-				Status:       "", // Not available in basic check
-				PictureID:    "", // Not available in basic check
-				Devices:      []types.JID{}, // Not available in basic check
-				LID:          nil,
-			}
-			uc.Users[item.JID] = info
-		}
-		
-		return uc, nil
+	basicResp, err := client.IsOnWhatsApp(context.Background(), phoneNumbers)
+	if err != nil {
+		u.loggerWrapper.GetLogger(instance.Id).LogError("[%s] IsOnWhatsApp check failed: %v", instance.Id, err)
+		return nil, err
 	}
 
 	uc := new(UserCollection)
 	uc.Users = make(map[types.JID]UserInfo)
 
-	for jid, whatsmeowInfo := range resp {
-		// Consultar LID Store para obter LID associado ao JID
-		var lidStr *string
-		if client.Store.LIDs != nil {
-			if lid, err := client.Store.LIDs.GetLIDForPN(context.TODO(), jid); err == nil && !lid.IsEmpty() {
-				lidString := fmt.Sprintf("%v", lid)
-				lidStr = &lidString
+	for _, item := range basicResp {
+		if !item.IsIn {
+			continue
+		}
+
+		// Initialize info with basic data
+		var vName *types.VerifiedName
+		if item.VerifiedName != nil {
+			vName = &types.VerifiedName{
+				Details:     item.VerifiedName.Details,
+				Certificate: item.VerifiedName.Certificate,
 			}
 		}
 
-		// Converter para nossa estrutura UserInfo que inclui LID
 		info := UserInfo{
-			VerifiedName: whatsmeowInfo.VerifiedName,
-			Status:       whatsmeowInfo.Status,
-			PictureID:    whatsmeowInfo.PictureID,
-			Devices:      whatsmeowInfo.Devices,
-			LID:          lidStr,
+			VerifiedName: vName,
+			Status:       "",
+			PictureID:    "",
+			Devices:      []types.JID{},
+			LID:          nil,
 		}
-		uc.Users[jid] = info
+
+		// Consult LID Store
+		if client.Store.LIDs != nil {
+			if lid, err := client.Store.LIDs.GetLIDForPN(context.TODO(), item.JID); err == nil && !lid.IsEmpty() {
+				lidString := fmt.Sprintf("%v", lid)
+				info.LID = &lidString
+			}
+		}
+
+		// 2. Fetch Status (About) individually with short timeout
+		// This is faster and less prone to full query timeouts
+		ctxStatus, cancelStatus := context.WithTimeout(context.Background(), 5*time.Second)
+		statusResp, err := client.GetUserStatus(ctxStatus, item.JID)
+		cancelStatus()
+		if err == nil && statusResp != nil {
+			info.Status = statusResp.Status
+		} else {
+			u.loggerWrapper.GetLogger(instance.Id).LogDebug("[%s] Failed to get status for %s: %v", instance.Id, item.JID, err)
+		}
+
+		// 3. Fetch Profile Picture individually with short timeout
+		ctxPic, cancelPic := context.WithTimeout(context.Background(), 5*time.Second)
+		picResp, err := client.GetProfilePictureInfo(ctxPic, item.JID, &whatsmeow.GetProfilePictureParams{
+			Preview: false, // Get full size if possible, or change to true for faster preview
+		})
+		cancelPic()
+		if err == nil && picResp != nil {
+			info.PictureID = picResp.ID
+			// You might want to include the URL too if UserInfo struct supported it, 
+			// but sticking to existing struct fields for now.
+		} else {
+			u.loggerWrapper.GetLogger(instance.Id).LogDebug("[%s] Failed to get profile picture for %s: %v", instance.Id, item.JID, err)
+		}
+
+		uc.Users[item.JID] = info
 	}
 
 	return uc, nil
