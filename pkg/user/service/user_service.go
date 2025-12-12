@@ -161,9 +161,31 @@ func (u *userService) GetUser(data *CheckUserStruct, instance *instance_model.In
 		}
 		jids = append(jids, jid)
 	}
-	resp, err := client.GetUserInfo(context.Background(), jids)
-	if err != nil {
-		return nil, err
+	var resp map[types.JID]types.UserInfo
+	var lastErr error
+
+	// Retry loop - try up to 2 times to avoid timeout issues
+	for i := 0; i < 2; i++ {
+		// Create a context with a timeout for each attempt (45 seconds)
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		
+		resp, lastErr = client.GetUserInfo(ctx, jids)
+		cancel() // Cancel context immediately to release resources
+
+		if lastErr == nil {
+			break
+		}
+		
+		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] GetUserInfo attempt %d failed: %v", instance.Id, i+1, lastErr)
+		
+		// If it's the last attempt, don't sleep
+		if i < 1 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
 	}
 
 	uc := new(UserCollection)
