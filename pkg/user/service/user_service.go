@@ -184,8 +184,50 @@ func (u *userService) GetUser(data *CheckUserStruct, instance *instance_model.In
 		}
 	}
 
+	// Fallback to IsOnWhatsApp if GetUserInfo fails (likely timeout)
 	if lastErr != nil {
-		return nil, lastErr
+		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] GetUserInfo failed completely, falling back to basic IsOnWhatsApp check: %v", instance.Id, lastErr)
+		
+		// Convert JIDs to string for IsOnWhatsApp
+		var phoneNumbers []string
+		for _, jid := range jids {
+			phoneNumbers = append(phoneNumbers, jid.User)
+		}
+
+		basicResp, err := client.IsOnWhatsApp(context.Background(), phoneNumbers)
+		if err != nil {
+			return nil, fmt.Errorf("both GetUserInfo and IsOnWhatsApp failed: %v (original error: %v)", err, lastErr)
+		}
+
+		// Construct partial response from basic info
+		uc := new(UserCollection)
+		uc.Users = make(map[types.JID]UserInfo)
+
+		for _, item := range basicResp {
+			if !item.IsIn {
+				continue
+			}
+
+			// Try to get verified name if available in basic response
+			var vName *types.VerifiedName
+			if item.VerifiedName != nil {
+				vName = &types.VerifiedName{
+					Details: item.VerifiedName.Details,
+					Certificate: item.VerifiedName.Certificate,
+				}
+			}
+
+			info := UserInfo{
+				VerifiedName: vName,
+				Status:       "", // Not available in basic check
+				PictureID:    "", // Not available in basic check
+				Devices:      []types.JID{}, // Not available in basic check
+				LID:          nil,
+			}
+			uc.Users[item.JID] = info
+		}
+		
+		return uc, nil
 	}
 
 	uc := new(UserCollection)
