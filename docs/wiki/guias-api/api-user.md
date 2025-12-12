@@ -161,6 +161,54 @@ curl -X POST http://localhost:4000/user/check \
 
 ---
 
+## Verificar Existência (Simples)
+
+Verifica de forma rápida e simplificada se os números existem no WhatsApp. Este endpoint é mais rápido que o `/user/check` pois retorna apenas a confirmação de existência, sem dados adicionais como foto ou contatos.
+
+**Endpoint**: `POST /user/exists`
+
+**Body**:
+```json
+{
+  "number": ["5511999999999", "5511888888888"]
+}
+```
+
+**Parâmetros**:
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `number` | array | ✅ Sim | Array de números em qualquer formato |
+
+**Resposta de Sucesso (200)**:
+```json
+{
+  "message": "success",
+  "data": [
+    {
+      "Query": "5511999999999",
+      "IsInWhatsapp": true
+    },
+    {
+      "Query": "5511888888888",
+      "IsInWhatsapp": false
+    }
+  ]
+}
+```
+
+**Exemplo cURL**:
+```bash
+curl -X POST http://localhost:4000/user/exists \
+  -H "Content-Type: application/json" \
+  -H "apikey: SUA-CHAVE-API" \
+  -d '{
+    "number": ["5511999999999", "5511888888888"]
+  }'
+```
+
+---
+
 ## Avatar do Usuário
 
 Obtém a URL da foto de perfil de um usuário.

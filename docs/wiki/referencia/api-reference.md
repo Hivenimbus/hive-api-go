@@ -71,6 +71,7 @@ http://localhost:4000
 
 - `POST /user/info` - Informações do usuário
 - `POST /user/check` - Verificar número no WhatsApp
+- `POST /user/exists` - Verificação rápida de número
 - `POST /user/avatar` - Obter avatar
 - `GET /user/contacts` - Listar contatos
 - `GET /user/privacy` - Configurações de privacidade
