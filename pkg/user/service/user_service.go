@@ -20,6 +20,7 @@ import (
 type UserService interface {
 	GetUser(data *CheckUserStruct, instance *instance_model.Instance) (*UserCollection, error)
 	CheckUser(data *CheckUserStruct, instance *instance_model.Instance) (*CheckUserCollection, error)
+	CheckUserSimple(data *CheckUserStruct, instance *instance_model.Instance) (*CheckUserSimpleCollection, error)
 	GetAvatar(data *GetAvatarStruct, instance *instance_model.Instance) (*types.ProfilePictureInfo, error)
 	GetContacts(instance *instance_model.Instance) ([]ContactInfo, error)
 	GetPrivacy(instance *instance_model.Instance) (types.PrivacySettings, error)
@@ -70,6 +71,15 @@ type User struct {
 	FirstName         string
 	FullName          string
 	ProfilePictureUrl string
+}
+
+type CheckUserSimple struct {
+	Query        string `json:"Query"`
+	IsInWhatsapp bool   `json:"IsInWhatsapp"`
+}
+
+type CheckUserSimpleCollection struct {
+	Users []CheckUserSimple `json:"Users"`
 }
 
 type CheckUserCollection struct {
@@ -222,6 +232,43 @@ func (u *userService) CheckUser(data *CheckUserStruct, instance *instance_model.
 
 		// Merge results: use retry results for users that weren't found in first attempt
 		return u.mergeCheckUserResults(uc, ucRetry), nil
+	}
+
+	return uc, nil
+}
+
+func (u *userService) CheckUserSimple(data *CheckUserStruct, instance *instance_model.Instance) (*CheckUserSimpleCollection, error) {
+	client, err := u.ensureClientConnected(instance.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set formatJid to false by default for CheckUserSimple
+	formatJid := false
+	if data.FormatJid != nil {
+		formatJid = *data.FormatJid
+	}
+
+	// Use centralized function to prepare numbers for WhatsApp check
+	phoneNumbers, err := utils.PrepareNumbersForWhatsAppCheck(data.Number, &formatJid)
+	if err != nil {
+		u.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Failed to prepare numbers for WhatsApp check: %v", instance.Id, err)
+		return nil, err
+	}
+
+	resp, err := client.IsOnWhatsApp(context.Background(), phoneNumbers)
+	if err != nil {
+		u.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to check users on WhatsApp: %v", instance.Id, err)
+		return nil, err
+	}
+
+	uc := new(CheckUserSimpleCollection)
+
+	for _, item := range resp {
+		uc.Users = append(uc.Users, CheckUserSimple{
+			Query:        item.Query,
+			IsInWhatsapp: item.IsIn,
+		})
 	}
 
 	return uc, nil

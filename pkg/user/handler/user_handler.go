@@ -11,6 +11,7 @@ import (
 type UserHandler interface {
 	GetUser(ctx *gin.Context)
 	CheckUser(ctx *gin.Context)
+	CheckUserSimple(ctx *gin.Context)
 	GetAvatar(ctx *gin.Context)
 	GetContacts(ctx *gin.Context)
 	GetPrivacy(ctx *gin.Context)
@@ -107,6 +108,47 @@ func (u *userHandler) CheckUser(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": uc})
+}
+
+// Check a user simple
+// @Summary Check a user simple
+// @Description Check a user simple
+// @Tags User
+// @Accept json
+// @Produce json
+// @Param message body user_service.CheckUserStruct true "User data"
+// @Success 200 {object} gin.H "success"
+// @Failure 400 {object} gin.H "Error on validation"
+// @Failure 500 {object} gin.H "Internal server error"
+// @Router /user/exists [post]
+func (u *userHandler) CheckUserSimple(ctx *gin.Context) {
+	getInstance := ctx.MustGet("instance")
+
+	instance, ok := getInstance.(*instance_model.Instance)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "instance not found"})
+		return
+	}
+
+	var data *user_service.CheckUserStruct
+	err := ctx.ShouldBindBodyWithJSON(&data)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(data.Number) < 1 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "phone number is required"})
+		return
+	}
+
+	uc, err := u.userService.CheckUserSimple(data, instance)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": uc.Users})
 }
 
 // Get a user's avatar
