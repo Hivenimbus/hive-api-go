@@ -435,6 +435,9 @@ func (u *userService) GetContacts(instance *instance_model.Instance) ([]ContactI
 	var contactsArray []ContactInfo
 
 	for jid, contact := range contacts {
+		if jid.Server == types.HiddenUserServer {
+			continue
+		}
 		contactsArray = append(contactsArray, ContactInfo{
 			Jid:          jid.String(),
 			Found:        contact.Found,
