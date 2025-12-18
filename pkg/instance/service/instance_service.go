@@ -229,11 +229,18 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 		}
 	} else {
 		for _, arg := range data.Subscribe {
-			if !event_types.IsEventType(arg) {
+			mappedEvent := arg
+			if arg == "messages.upsert" {
+				mappedEvent = event_types.MESSAGE
+			} else if arg == "connection.update" {
+				mappedEvent = event_types.CONNECTION
+			}
+
+			if !event_types.IsEventType(mappedEvent) {
 				i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Message type discarded '%s'", instance.Id, arg)
 				continue
 			}
-			subscribedEvents = append(subscribedEvents, arg)
+			subscribedEvents = append(subscribedEvents, mappedEvent)
 		}
 	}
 
