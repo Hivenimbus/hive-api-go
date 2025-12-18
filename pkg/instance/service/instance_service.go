@@ -66,6 +66,8 @@ type CreateStruct struct {
 	InstanceId       string                           `json:"instanceId"`
 	Name             string                           `json:"name"`
 	Token            string                           `json:"token"`
+	Webhook          string                           `json:"webhook"`
+	WebhookEvents    []string                         `json:"webhookEvents"`
 	Proxy            *ProxyConfig                     `json:"proxy"`
 	AdvancedSettings *instance_model.AdvancedSettings `json:"advancedSettings"`
 }
@@ -165,10 +167,30 @@ func (i instances) Create(data *CreateStruct) (*instance_model.Instance, error) 
 		return nil, fmt.Errorf("instance already exists")
 	}
 
+	var validEvents []string
+	if len(data.WebhookEvents) > 0 {
+		for _, event := range data.WebhookEvents {
+			mappedEvent := event
+			if event == "messages.upsert" {
+				mappedEvent = event_types.MESSAGE
+			} else if event == "connection.update" {
+				mappedEvent = event_types.CONNECTION
+			}
+
+			if event_types.IsEventType(mappedEvent) {
+				validEvents = append(validEvents, mappedEvent)
+			}
+		}
+	}
+
+	eventsString := strings.Join(validEvents, ",")
+
 	instance := instance_model.Instance{
 		Id:         data.InstanceId,
 		Name:       data.Name,
 		Token:      data.Token,
+		Webhook:    data.Webhook,
+		Events:     eventsString,
 		OsName:     i.config.OsName,
 		Proxy:      string(proxyJson),
 		Connected:  false,
