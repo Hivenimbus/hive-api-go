@@ -281,7 +281,7 @@ func (cli *Client) rawUpload(ctx context.Context, dataToUpload io.Reader, upload
 			if round == maxRounds {
 				return fmt.Errorf("failed to refresh media connections: %w", err)
 			}
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(time.Duration(round*3) * time.Second)
 			continue
 		}
 
@@ -312,7 +312,7 @@ func (cli *Client) rawUpload(ctx context.Context, dataToUpload io.Reader, upload
 
 		// All hosts in this round failed.
 		if round < maxRounds {
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(time.Duration(round*4) * time.Second)
 		} else {
 			return fmt.Errorf("upload failed after %d rounds across all CDN hosts: %w", maxRounds, lastErr)
 		}
