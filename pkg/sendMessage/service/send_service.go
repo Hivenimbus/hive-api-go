@@ -306,6 +306,21 @@ func (s *sendService) ensureClientConnectedWithRetry(instanceId string, maxRetri
 	return nil, fmt.Errorf("failed to connect client after %d attempts", maxRetries)
 }
 
+// isUploadError returns true if the error is a transient network/CDN error
+// that occurred during media upload to WhatsApp CDN servers.
+// These errors (connection reset, EOF, broken pipe) are safe to retry.
+func isUploadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "connection reset by peer") ||
+		strings.Contains(e, "broken pipe") ||
+		strings.Contains(e, "EOF") ||
+		strings.Contains(e, "failed to execute request") ||
+		strings.Contains(e, "failed to refresh media connections")
+}
+
 func validateMessageFields(phone string, formatJid *bool, messageID *string, participant *string) (types.JID, error) {
 	// Apply formatting if formatJid is true (default)
 	shouldFormat := true // Default value
@@ -853,9 +868,19 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 			return nil, errors.New("invalid media type")
 		}
 
-		uploaded, err := client.Upload(context.Background(), fileData, uploadType)
-		if err != nil {
-			return nil, err
+		// Upload with retry for transient CDN/network errors (e.g. "connection reset by peer")
+		var uploaded whatsmeow.UploadResponse
+		for uploadAttempt := 1; uploadAttempt <= 3; uploadAttempt++ {
+			uploaded, err = client.Upload(context.Background(), fileData, uploadType)
+			if err == nil {
+				break
+			}
+			if isUploadError(err) && uploadAttempt < 3 {
+				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Upload falhou (tentativa %d/3): %v. Aguardando antes de nova tentativa...", instance.Id, uploadAttempt, err)
+				time.Sleep(time.Duration(uploadAttempt*2) * time.Second)
+				continue
+			}
+			return nil, fmt.Errorf("failed to upload media after %d attempts: %w", uploadAttempt, err)
 		}
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Media uploaded with size %d", instance.Id, uploaded.FileLength)
@@ -950,8 +975,8 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 		})
 
 		if err != nil {
-			// Check if it's a client disconnection error
-			if strings.Contains(err.Error(), "client disconnected") || strings.Contains(err.Error(), "no active session") {
+			// Check if it's a client disconnection error (includes "websocket not connected")
+			if isConnectionError(err) {
 				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendMediaFile failed due to disconnection on attempt %d/%d: %v", instance.Id, attempt, maxRetries, err)
 				if attempt < maxRetries {
 					waitTime := time.Duration(attempt) * time.Second
@@ -1061,9 +1086,15 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Iniciando upload para WhatsApp...", instance.Id)
 		uploadStart := time.Now()
+		// Upload with retry for transient CDN/network errors (e.g. "connection reset by peer")
 		uploaded, err := client.Upload(context.Background(), fileData, uploadType)
-		if err != nil {
-			return nil, err
+		for uploadAttempt := 1; err != nil; uploadAttempt++ {
+			if !isUploadError(err) || uploadAttempt >= 3 {
+				return nil, fmt.Errorf("failed to upload media after %d attempts: %w", uploadAttempt, err)
+			}
+			s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Upload falhou (tentativa %d/3): %v. Aguardando antes de nova tentativa...", instance.Id, uploadAttempt, err)
+			time.Sleep(time.Duration(uploadAttempt*2) * time.Second)
+			uploaded, err = client.Upload(context.Background(), fileData, uploadType)
 		}
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Upload concluído em %v. Tamanho: %d", instance.Id, time.Since(uploadStart), uploaded.FileLength)
 
