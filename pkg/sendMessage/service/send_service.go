@@ -213,6 +213,20 @@ type MessageSendStruct struct {
 	MessageContextInfo *waE2E.ContextInfo
 }
 
+// isConnectionError returns true if the error is any kind of WebSocket/connection error
+// that warrants a reconnect retry. This includes the whatsmeow ErrNotConnected error
+// ("websocket not connected") as well as internal service errors.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "websocket not connected") ||
+		strings.Contains(e, "client disconnected") ||
+		strings.Contains(e, "no active session") ||
+		strings.Contains(e, "failed to connect")
+}
+
 func (s *sendService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
 	client := s.clientPointer[instanceId]
 	s.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
@@ -263,7 +277,7 @@ func (s *sendService) ensureClientConnectedWithRetry(instanceId string, maxRetri
 		}
 
 		// Check if it's a disconnection error that we can retry
-		if err.Error() == "client disconnected" || err.Error() == "no active session found" {
+		if isConnectionError(err) {
 			s.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Client disconnected on attempt %d/%d, attempting reconnection...", instanceId, attempt, maxRetries)
 
 			// Attempt to reconnect the client
@@ -468,8 +482,8 @@ func (s *sendService) sendTextWithRetry(data *TextStruct, instance *instance_mod
 		})
 
 		if err != nil {
-			// Check if it's a client disconnection error
-			if strings.Contains(err.Error(), "client disconnected") || strings.Contains(err.Error(), "no active session") {
+			// Check if it's a client disconnection error (includes "websocket not connected")
+			if isConnectionError(err) {
 				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendText failed due to disconnection on attempt %d/%d: %v", instance.Id, attempt, maxRetries, err)
 				if attempt < maxRetries {
 					waitTime := time.Duration(attempt) * time.Second
@@ -1708,8 +1722,14 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 	}
 
 	var message string
+	// Verify connection before using the client (protects GenerateMessageID, SendChatPresence, etc.)
+	cli0 := s.clientPointer[instance.Id]
+	if cli0 == nil || !cli0.IsConnected() {
+		s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendMessage: client not connected at entry, aborting early", instance.Id)
+		return nil, errors.New("client disconnected")
+	}
 	if data.Id == "" {
-		message = s.clientPointer[instance.Id].GenerateMessageID()
+		message = cli0.GenerateMessageID()
 	} else {
 		message = data.Id
 	}
@@ -1916,7 +1936,15 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 
 	recipient.User = strings.ReplaceAll(recipient.User, "+", "")
 
-	response, err := s.clientPointer[instance.Id].SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: message})
+	// Fix: verify connection RIGHT before sending to avoid "websocket not connected" 500 errors
+	// during mass/bulk sending when the connection drops between the pre-check and the actual send.
+	cli := s.clientPointer[instance.Id]
+	if cli == nil || !cli.IsConnected() {
+		s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Client not connected at send time, aborting", instance.Id)
+		return nil, errors.New("client disconnected")
+	}
+
+	response, err := cli.SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: message})
 	if err != nil {
 		return nil, err
 	}
