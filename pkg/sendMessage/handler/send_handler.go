@@ -119,14 +119,14 @@ func (s *sendHandler) SendLink(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": message})
 }
 
-// Send a media message
+// Send a media message (async)
 // @Summary Send a media message
-// @Description Send a media message
+// @Description Send a media message. The processing (download, conversion, upload) happens asynchronously.
 // @Tags Send Message
 // @Accept json
 // @Produce json
 // @Param message body send_service.MediaStruct true "Message data"
-// @Success 200 {object} gin.H "success"
+// @Success 202 {object} gin.H "accepted"
 // @Failure 400 {object} gin.H "Error on validation"
 // @Failure 500 {object} gin.H "Internal server error"
 // @Router /send/media [post]
@@ -141,10 +141,8 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 
 	contentType := ctx.ContentType()
 
-	var data *send_service.MediaStruct
-
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		// Handle form-data
+		// ── form-data (upload de arquivo direto) ──────────────────────────────
 		number := ctx.PostForm("number")
 		if number == "" {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "phone number is required"})
@@ -171,14 +169,12 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 			delay = int32(delay64)
 		}
 
-		// Get file
 		file, err := ctx.FormFile("file")
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 			return
 		}
 
-		// Open file
 		fileData, err := file.Open()
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "cannot open file"})
@@ -191,28 +187,24 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 			return
 		}
 
-		// Create MediaStruct
-		data = &send_service.MediaStruct{
+		data := &send_service.MediaStruct{
 			Number:   number,
 			Type:     mediaType,
 			Caption:  caption,
 			Filename: filename,
 			Id:       id,
 			Delay:    delay,
-			// Other fields as necessary
 		}
 
-		// Pass fileBytes to the send service
-		message, err := s.sendMessageService.SendMediaFile(data, fileBytes, instance)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		// Responde imediatamente para não estourar o timeout do proxy
+		ctx.JSON(http.StatusAccepted, gin.H{"message": "accepted", "queued": true})
 
-		ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": message})
+		// Processamento pesado em background
+		go s.sendMessageService.SendMediaFile(data, fileBytes, instance) //nolint:errcheck
 
 	} else {
-
+		// ── JSON (URL de mídia) ────────────────────────────────────────────────
+		var data *send_service.MediaStruct
 		err := ctx.ShouldBindBodyWithJSON(&data)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -234,13 +226,11 @@ func (s *sendHandler) SendMedia(ctx *gin.Context) {
 			return
 		}
 
-		message, err := s.sendMessageService.SendMediaUrl(data, instance)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		// Responde imediatamente para não estourar o timeout do proxy
+		ctx.JSON(http.StatusAccepted, gin.H{"message": "accepted", "queued": true})
 
-		ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": message})
+		// Processamento pesado em background (download + conversão + upload + envio)
+		go s.sendMessageService.SendMediaUrl(data, instance) //nolint:errcheck
 	}
 }
 
