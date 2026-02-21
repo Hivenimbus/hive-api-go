@@ -2360,14 +2360,14 @@ func fetchWhatsAppWebVersion() (*clientVersion, error) {
 		}
 	}
 
-	// Se chegou aqui, nenhum padrão funcionou - log do conteúdo para debug
-	// Mostra apenas uma parte para não logar muito
-	previewLength := 500
-	if len(content) > previewLength {
-		content = content[:previewLength] + "..."
-	}
-
-	return nil, fmt.Errorf("could not find client revision in the fetched content. Content preview: %s", content)
+	// Se chegou aqui, nenhum padrão funcionou
+	// Ao invés de retornar um erro e deixar a versão como 0.1.0,
+	// vamos usar uma versão conhecida fixa para evitar desconexão.
+	return &clientVersion{
+		Major: 2,
+		Minor: 3000,
+		Patch: 1017531238, // Hardcoded fallback for stable connection
+	}, nil
 }
 
 func (w whatsmeowService) UpdateInstanceSettings(instanceId string) error {
