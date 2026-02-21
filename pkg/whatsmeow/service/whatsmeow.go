@@ -497,6 +497,8 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				err = client.Connect()
 				if err != nil {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Falha na segunda tentativa de conexão: %v", cd.Instance.Id, err)
+					delete(w.clientPointer, cd.Instance.Id)
+					delete(w.myClientPointer, cd.Instance.Id)
 					return
 				}
 			} else if strings.Contains(err.Error(), "username/password authentication failed") {
@@ -509,11 +511,15 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				err = client.Connect()
 				if err != nil {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect even without proxy: %v", cd.Instance.Id, err)
+					delete(w.clientPointer, cd.Instance.Id)
+					delete(w.myClientPointer, cd.Instance.Id)
 					return
 				}
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 			} else {
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+				delete(w.clientPointer, cd.Instance.Id)
+				delete(w.myClientPointer, cd.Instance.Id)
 				return
 			}
 		}
@@ -522,6 +528,8 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		if err != nil {
 			if !errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to get QR channel: %v", cd.Instance.Id, err)
+				delete(w.clientPointer, cd.Instance.Id)
+				delete(w.myClientPointer, cd.Instance.Id)
 				return
 			}
 		} else {
@@ -533,6 +541,8 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 					err = client.Connect()
 					if err != nil {
 						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Falha na segunda tentativa de conexão: %v", cd.Instance.Id, err)
+						delete(w.clientPointer, cd.Instance.Id)
+						delete(w.myClientPointer, cd.Instance.Id)
 						return
 					}
 				} else if strings.Contains(err.Error(), "username/password authentication failed") {
@@ -545,11 +555,15 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 					err = client.Connect()
 					if err != nil {
 						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect even without proxy: %v", cd.Instance.Id, err)
+						delete(w.clientPointer, cd.Instance.Id)
+						delete(w.myClientPointer, cd.Instance.Id)
 						return
 					}
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 				} else {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+					delete(w.clientPointer, cd.Instance.Id)
+					delete(w.myClientPointer, cd.Instance.Id)
 					return
 				}
 			}
