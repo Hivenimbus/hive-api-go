@@ -18,8 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
-	"time"
 
 	"go.mau.fi/util/random"
 
@@ -191,11 +189,21 @@ func (cli *Client) UploadNewsletterReader(ctx context.Context, data io.ReadSeeke
 }
 
 func (cli *Client) rawUpload(ctx context.Context, dataToUpload io.Reader, uploadSize uint64, fileHash []byte, appInfo MediaType, newsletter bool, resp *UploadResponse) error {
+	mediaConn, err := cli.refreshMediaConn(ctx, false)
+	if err != nil {
+		return fmt.Errorf("failed to refresh media connections: %w", err)
+	}
+
 	token := base64.URLEncoding.EncodeToString(fileHash)
+	q := url.Values{
+		"auth":  []string{mediaConn.Auth},
+		"token": []string{token},
+	}
 	mmsType := mediaTypeToMMSType[appInfo]
 	uploadPrefix := "mms"
 	if cli.MessengerConfig != nil {
 		uploadPrefix = "wa-msgr/mms"
+		// Messenger upload only allows voice messages, not audio files
 		if mmsType == "audio" {
 			mmsType = "ptt"
 		}
@@ -204,119 +212,40 @@ func (cli *Client) rawUpload(ctx context.Context, dataToUpload io.Reader, upload
 		mmsType = fmt.Sprintf("newsletter-%s", mmsType)
 		uploadPrefix = "newsletter"
 	}
-
-	// isTransientUploadError returns true for TCP-level errors that are safe to retry.
-	isTransientUploadError := func(e error) bool {
-		if e == nil {
-			return false
-		}
-		msg := e.Error()
-		return strings.Contains(msg, "connection reset by peer") ||
-			strings.Contains(msg, "broken pipe") ||
-			strings.Contains(msg, "EOF") ||
-			strings.Contains(msg, "failed to execute request") ||
-			strings.Contains(msg, "failed to refresh media connections")
+	var host string
+	// Hacky hack to prefer last option (rupload.facebook.com) for messenger uploads.
+	// For some reason, the primary host doesn't work, even though it has the <upload/> tag.
+	if cli.MessengerConfig != nil {
+		host = mediaConn.Hosts[len(mediaConn.Hosts)-1].Hostname
+	} else {
+		host = mediaConn.Hosts[0].Hostname
+	}
+	uploadURL := url.URL{
+		Scheme:   "https",
+		Host:     host,
+		Path:     fmt.Sprintf("/%s/%s/%s", uploadPrefix, mmsType, token),
+		RawQuery: q.Encode(),
 	}
 
-	// tryUpload attempts the upload to a specific host using the given mediaConn auth.
-	// freshTransport forces a new TCP connection instead of reusing pooled ones.
-	tryUpload := func(host string, auth string, freshTransport bool) error {
-		q := url.Values{
-			"auth":  []string{auth},
-			"token": []string{token},
-		}
-		uploadURL := url.URL{
-			Scheme:   "https",
-			Host:     host,
-			Path:     fmt.Sprintf("/%s/%s/%s", uploadPrefix, mmsType, token),
-			RawQuery: q.Encode(),
-		}
-
-		// When a previous attempt failed with a TCP-level reset, we read the reader
-		// so we need to seek back to start if it supports seeking.
-		if seeker, ok := dataToUpload.(io.Seeker); ok {
-			_, _ = seeker.Seek(0, io.SeekStart)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL.String(), dataToUpload)
-		if err != nil {
-			return fmt.Errorf("failed to prepare request: %w", err)
-		}
-		req.ContentLength = int64(uploadSize)
-		req.Header.Set("Origin", socket.Origin)
-		req.Header.Set("Referer", socket.Origin+"/")
-
-		httpClient := cli.mediaHTTP
-		if freshTransport {
-			// Use a fresh HTTP client with no keep-alive to avoid broken TCP connections.
-			httpClient = &http.Client{
-				Transport: &http.Transport{
-					DisableKeepAlives: true,
-				},
-				Timeout: 120 * time.Second,
-			}
-		}
-
-		httpResp, err := httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("failed to execute request: %w", err)
-		}
-		defer httpResp.Body.Close()
-		if httpResp.StatusCode != http.StatusOK {
-			return fmt.Errorf("upload failed with status code %d", httpResp.StatusCode)
-		}
-		if err = json.NewDecoder(httpResp.Body).Decode(resp); err != nil {
-			return fmt.Errorf("failed to parse upload response: %w", err)
-		}
-		return nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL.String(), dataToUpload)
+	if err != nil {
+		return fmt.Errorf("failed to prepare request: %w", err)
 	}
 
-	const maxRounds = 3
-	for round := 1; round <= maxRounds; round++ {
-		// Force-refresh media connections on every round so we get a fresh auth token
-		// and potentially different hosts after a failure.
-		forceRefresh := round > 1
-		mediaConn, err := cli.refreshMediaConn(ctx, forceRefresh)
-		if err != nil {
-			if round == maxRounds {
-				return fmt.Errorf("failed to refresh media connections: %w", err)
-			}
-			time.Sleep(time.Duration(round*3) * time.Second)
-			continue
-		}
+	req.ContentLength = int64(uploadSize)
+	req.Header.Set("Origin", socket.Origin)
+	req.Header.Set("Referer", socket.Origin+"/")
 
-		// Build the host list to try this round.
-		var hosts []string
-		if cli.MessengerConfig != nil {
-			// Messenger: prefer last host.
-			hosts = []string{mediaConn.Hosts[len(mediaConn.Hosts)-1].Hostname}
-		} else {
-			for _, h := range mediaConn.Hosts {
-				hosts = append(hosts, h.Hostname)
-			}
-		}
-
-		freshTransport := round > 1
-		var lastErr error
-		for _, host := range hosts {
-			lastErr = tryUpload(host, mediaConn.Auth, freshTransport)
-			if lastErr == nil {
-				return nil
-			}
-			if !isTransientUploadError(lastErr) {
-				// Non-transient error (e.g. 403, bad token) — no point trying other hosts.
-				return lastErr
-			}
-			// Transient: try the next host.
-		}
-
-		// All hosts in this round failed.
-		if round < maxRounds {
-			time.Sleep(time.Duration(round*4) * time.Second)
-		} else {
-			return fmt.Errorf("upload failed after %d rounds across all CDN hosts: %w", maxRounds, lastErr)
-		}
+	httpResp, err := cli.mediaHTTP.Do(req)
+	if err != nil {
+		err = fmt.Errorf("failed to execute request: %w", err)
+	} else if httpResp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("upload failed with status code %d", httpResp.StatusCode)
+	} else if err = json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
+		err = fmt.Errorf("failed to parse upload response: %w", err)
 	}
-
-	return fmt.Errorf("upload failed after %d rounds", maxRounds)
+	if httpResp != nil {
+		_ = httpResp.Body.Close()
+	}
+	return err
 }

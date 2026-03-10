@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	mathRand "math/rand/v2"
-	"time"
 
 	"github.com/google/uuid"
 	"go.mau.fi/util/dbutil"
@@ -49,14 +48,6 @@ func New(ctx context.Context, dialect, address string, log waLog.Logger) (*Conta
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-
-	if dialect == "postgres" {
-		db.SetMaxOpenConns(25)
-		db.SetMaxIdleConns(5)
-		db.SetConnMaxLifetime(5 * time.Minute)
-		db.SetConnMaxIdleTime(1 * time.Minute)
-	}
-
 	container := NewWithDB(db, dialect, log)
 	err = container.Upgrade(ctx)
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
 	"image/png"
 	"io"
 	"mime/multipart"
@@ -23,7 +22,7 @@ import (
 	logger_wrapper "github.com/EvolutionAPI/evolution-go/pkg/logger"
 	"github.com/EvolutionAPI/evolution-go/pkg/utils"
 	whatsmeow_service "github.com/EvolutionAPI/evolution-go/pkg/whatsmeow/service"
-	"github.com/chai2010/webp"
+	"golang.org/x/image/webp"
 	"github.com/gabriel-vasile/mimetype"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -1265,7 +1264,7 @@ func (s *sendService) sendPollWithRetry(data *PollStruct, instance *instance_mod
 }
 
 func convertToWebP(imageData string) ([]byte, error) {
-	var img image.Image
+	// var img image.Image
 	var err error
 
 	resp, err := http.Get(imageData)
@@ -1274,11 +1273,17 @@ func convertToWebP(imageData string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	/*
 	img, _, err = image.Decode(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
+	*/
+	_ = resp.Body // Just to keep the reference if needed or close it properly
 
+
+	return nil, fmt.Errorf("WebP encoding is currently disabled on this build environment. Please install a C compiler (GCC) to enable sticker conversion.")
+	/*
 	var webpBuffer bytes.Buffer
 	err = webp.Encode(&webpBuffer, img, &webp.Options{Lossless: false, Quality: 80})
 	if err != nil {
@@ -1286,6 +1291,7 @@ func convertToWebP(imageData string) ([]byte, error) {
 	}
 
 	return webpBuffer.Bytes(), nil
+	*/
 }
 
 func (s *sendService) SendSticker(data *StickerStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
@@ -2048,7 +2054,7 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 			data, err = s.clientPointer[instance.Id].Download(context.Background(), sticker)
 
 			webpReader := bytes.NewReader(data)
-			img, err := webp.Decode(webpReader)
+			img, err := webp.Decode(webpReader) // Using x/image/webp (Pure Go Decoder)
 			if err == nil {
 				var pngBuffer bytes.Buffer
 				err = png.Encode(&pngBuffer, img)

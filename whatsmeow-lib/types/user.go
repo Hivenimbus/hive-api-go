@@ -86,7 +86,6 @@ type LocalChatSettings struct {
 type IsOnWhatsAppResponse struct {
 	Query string // The query string used
 	JID   JID    // The canonical user ID
-	LID   *JID   // The local ID (if available)
 	IsIn  bool   // Whether the phone is registered or not.
 
 	VerifiedName *VerifiedName // If the phone is a business, the verified business details.
@@ -119,10 +118,13 @@ const (
 	PrivacySettingUndefined        PrivacySetting = ""
 	PrivacySettingAll              PrivacySetting = "all"
 	PrivacySettingContacts         PrivacySetting = "contacts"
+	PrivacySettingContactAllowlist PrivacySetting = "contact_allowlist"
 	PrivacySettingContactBlacklist PrivacySetting = "contact_blacklist"
 	PrivacySettingMatchLastSeen    PrivacySetting = "match_last_seen"
 	PrivacySettingKnown            PrivacySetting = "known"
 	PrivacySettingNone             PrivacySetting = "none"
+	PrivacySettingOnStandard       PrivacySetting = "on_standard"
+	PrivacySettingOff              PrivacySetting = "off"
 )
 
 // PrivacySettingType is the type of privacy setting.
@@ -136,6 +138,9 @@ const (
 	PrivacySettingTypeReadReceipts PrivacySettingType = "readreceipts" // Valid values: PrivacySettingAll, PrivacySettingNone
 	PrivacySettingTypeOnline       PrivacySettingType = "online"       // Valid values: PrivacySettingAll, PrivacySettingMatchLastSeen
 	PrivacySettingTypeCallAdd      PrivacySettingType = "calladd"      // Valid values: PrivacySettingAll, PrivacySettingKnown
+	PrivacySettingTypeMessages     PrivacySettingType = "messages"     // Valid values: PrivacySettingAll, PrivacySettingContacts
+	PrivacySettingTypeDefense      PrivacySettingType = "defense"      // Valid values: PrivacySettingOnStandard, PrivacySettingOff
+	PrivacySettingTypeStickers     PrivacySettingType = "stickers"     // Valid values: PrivacySettingContacts, PrivacySettingContactAllowlist, PrivacySettingNone
 )
 
 // PrivacySettings contains the user's privacy settings.
@@ -147,6 +152,9 @@ type PrivacySettings struct {
 	ReadReceipts PrivacySetting // Valid values: PrivacySettingAll, PrivacySettingNone
 	CallAdd      PrivacySetting // Valid values: PrivacySettingAll, PrivacySettingKnown
 	Online       PrivacySetting // Valid values: PrivacySettingAll, PrivacySettingMatchLastSeen
+	Messages     PrivacySetting // Valid values: PrivacySettingAll, PrivacySettingContacts
+	Defense      PrivacySetting // Valid values: PrivacySettingOnStandard, PrivacySettingOff
+	Stickers     PrivacySetting // Valid values: PrivacySettingContacts, PrivacySettingContactAllowlist, PrivacySettingNone
 }
 
 // StatusPrivacyType is the type of list in StatusPrivacy.
