@@ -663,14 +663,18 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 						fmt.Println("QR code:\n", evt.Code)
 					}
 
-					image, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+					image, err := qrcode.Encode(evt.Code, qrcode.Medium, 256)
+					if err != nil {
+						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Error encoding QR code: %v", cd.Instance.Id, err)
+						return
+					}
 					base64qrcode := "data:image/png;base64," + base64.StdEncoding.EncodeToString(image)
 
 					base64WithCode := base64qrcode + "|" + evt.Code
 
 					cd.Instance.Qrcode = base64WithCode
 
-					err := w.instanceRepository.UpdateQrcode(cd.Instance.Id, base64WithCode)
+					err = w.instanceRepository.UpdateQrcode(cd.Instance.Id, base64WithCode)
 					if err != nil {
 						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Error updating instance: %s", cd.Instance.Id, err)
 					}
