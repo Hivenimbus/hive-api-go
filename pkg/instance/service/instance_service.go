@@ -156,16 +156,21 @@ func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client,
 		var clientConnected bool
 		for j := 0; j < 30; j++ {
 			time.Sleep(500 * time.Millisecond)
-			if client.IsConnected() {
+			client = i.clientPointer[instanceId]
+			if client != nil && client.IsConnected() {
 				clientConnected = true
 				break
 			}
 		}
 
 		if !clientConnected {
+			var connStatus bool
+			if client != nil {
+				connStatus = client.IsConnected()
+			}
 			logger.LogError("[%s] Existing client is disconnected - Connected status: %v",
 				instanceId,
-				client.IsConnected())
+				connStatus)
 			return nil, errors.New("client disconnected")
 		}
 	}
@@ -422,12 +427,21 @@ func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, erro
 		return nil, fmt.Errorf("session already logged in")
 	}
 
-	instance, err = i.instanceRepository.GetInstanceByID(instance.Id)
-	if err != nil {
-		return nil, err
+	var code string
+	// Poll for QR code for up to 10 seconds
+	for j := 0; j < 20; j++ {
+		instance, err = i.instanceRepository.GetInstanceByID(instance.Id)
+		if err != nil {
+			return nil, err
+		}
+
+		code = instance.Qrcode
+		if code != "" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	code := instance.Qrcode
 	if code == "" {
 		return nil, fmt.Errorf("no QR code available")
 	}
