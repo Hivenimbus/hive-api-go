@@ -126,27 +126,48 @@ func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client,
 			return nil, errors.New("no active session found")
 		}
 
-		logger.LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
-		time.Sleep(2 * time.Second)
+		logger.LogInfo("[%s] Instance started, waiting for client to connect...", instanceId)
+		
+		// Poll for up to 15 seconds
+		var clientConnected bool
+		for j := 0; j < 30; j++ {
+			time.Sleep(500 * time.Millisecond)
+			client = i.clientPointer[instanceId]
+			if client != nil && client.IsConnected() {
+				clientConnected = true
+				break
+			}
+		}
 
-		client = i.clientPointer[instanceId]
 		logger.LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,
-			client != nil && client.IsConnected())
+			clientConnected)
 
-		if client == nil || !client.IsConnected() {
+		if client == nil || !clientConnected {
 			logger.LogError("[%s] New client validation failed - Exists: %v, Connected: %v",
 				instanceId,
 				client != nil,
-				client != nil && client.IsConnected())
+				clientConnected)
 			return nil, errors.New("no active session found")
 		}
 	} else if !client.IsConnected() {
-		logger.LogError("[%s] Existing client is disconnected - Connected status: %v",
-			instanceId,
-			client.IsConnected())
-		return nil, errors.New("client disconnected")
+		logger.LogInfo("[%s] Existing client is currently disconnected, waiting up to 15 seconds for connection...", instanceId)
+		var clientConnected bool
+		for j := 0; j < 30; j++ {
+			time.Sleep(500 * time.Millisecond)
+			if client.IsConnected() {
+				clientConnected = true
+				break
+			}
+		}
+
+		if !clientConnected {
+			logger.LogError("[%s] Existing client is disconnected - Connected status: %v",
+				instanceId,
+				client.IsConnected())
+			return nil, errors.New("client disconnected")
+		}
 	}
 
 	logger.LogInfo("[%s] Client successfully validated - Connected: %v", instanceId, client.IsConnected())
