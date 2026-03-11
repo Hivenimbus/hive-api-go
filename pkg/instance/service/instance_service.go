@@ -115,7 +115,7 @@ type ForceReconnectStruct struct {
 	Number string `json:"number"`
 }
 
-func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
+func (i *instances) ensureClientConnected(instanceId string, mustBeConnected bool) (*whatsmeow.Client, error) {
 	logger := i.loggerWrapper.GetLogger(instanceId)
 	client := i.clientPointer[instanceId]
 	logger.LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
@@ -128,27 +128,62 @@ func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client,
 			return nil, errors.New("no active session found")
 		}
 
-		logger.LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
-		time.Sleep(2 * time.Second)
+		logger.LogInfo("[%s] Instance started, waiting for client to connect...", instanceId)
+		
+		// Poll for up to 15 seconds
+		var clientConnected bool
+		for j := 0; j < 30; j++ {
+			time.Sleep(500 * time.Millisecond)
+			client = i.clientPointer[instanceId]
+			if client != nil && client.IsConnected() {
+				clientConnected = true
+				break
+			}
+		}
 
-		client = i.clientPointer[instanceId]
 		logger.LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,
-			client != nil && client.IsConnected())
+			clientConnected)
 
-		if client == nil || !client.IsConnected() {
+		if client == nil || (mustBeConnected && !clientConnected) {
 			logger.LogError("[%s] New client validation failed - Exists: %v, Connected: %v",
 				instanceId,
 				client != nil,
-				client != nil && client.IsConnected())
+				clientConnected)
 			return nil, errors.New("no active session found")
 		}
 	} else if !client.IsConnected() {
-		logger.LogError("[%s] Existing client is disconnected - Connected status: %v",
-			instanceId,
-			client.IsConnected())
-		return nil, errors.New("client disconnected")
+		if mustBeConnected {
+			logger.LogInfo("[%s] Existing client is currently disconnected, waiting up to 15 seconds for connection...", instanceId)
+			var clientConnected bool
+			for j := 0; j < 30; j++ {
+				time.Sleep(500 * time.Millisecond)
+				client = i.clientPointer[instanceId]
+				if client != nil && client.IsConnected() {
+					clientConnected = true
+					break
+				}
+			}
+
+			if !clientConnected {
+				var connStatus bool
+				if client != nil {
+					connStatus = client.IsConnected()
+				}
+				logger.LogError("[%s] Existing client is disconnected - Connected status: %v",
+					instanceId,
+					connStatus)
+				return nil, errors.New("client disconnected")
+			}
+		} else {
+			logger.LogInfo("[%s] Client is disconnected but mustBeConnected=false, triggering background reconnection if not already connecting", instanceId)
+			// For QR and Status, we don't wait for full connection but we want to ensure it's trying
+			go func() {
+				// Simple check to avoid double reconnection if already in progress
+				i.whatsmeowService.ReconnectClient(instanceId)
+			}()
+		}
 	}
 
 	logger.LogInfo("[%s] Client successfully validated - Connected: %v", instanceId, client.IsConnected())
@@ -311,7 +346,7 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 }
 
 func (i instances) Reconnect(instance *instance_model.Instance) error {
-	_, err := i.ensureClientConnected(instance.Id)
+	_, err := i.ensureClientConnected(instance.Id, true)
 	if err != nil {
 		return err
 	}
@@ -320,7 +355,7 @@ func (i instances) Reconnect(instance *instance_model.Instance) error {
 }
 
 func (i instances) Disconnect(instance *instance_model.Instance) (*instance_model.Instance, error) {
-	client, err := i.ensureClientConnected(instance.Id)
+	client, err := i.ensureClientConnected(instance.Id, true)
 	if err != nil {
 		return instance, err
 	}
@@ -346,7 +381,7 @@ func (i instances) Disconnect(instance *instance_model.Instance) (*instance_mode
 }
 
 func (i instances) Logout(instance *instance_model.Instance) (*instance_model.Instance, error) {
-	client, err := i.ensureClientConnected(instance.Id)
+	client, err := i.ensureClientConnected(instance.Id, true)
 	if err != nil {
 		return instance, err
 	}
@@ -395,7 +430,7 @@ func (i instances) Logout(instance *instance_model.Instance) (*instance_model.In
 }
 
 func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, error) {
-	client, err := i.ensureClientConnected(instance.Id)
+	client, err := i.ensureClientConnected(instance.Id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +456,7 @@ func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, err
 }
 
 func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, error) {
-	client, err := i.ensureClientConnected(instance.Id)
+	client, err := i.ensureClientConnected(instance.Id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -430,12 +465,21 @@ func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, erro
 		return nil, fmt.Errorf("session already logged in")
 	}
 
-	instance, err = i.instanceRepository.GetInstanceByID(instance.Id)
-	if err != nil {
-		return nil, err
+	var code string
+	// Poll for QR code for up to 20 seconds
+	for j := 0; j < 40; j++ {
+		instance, err = i.instanceRepository.GetInstanceByID(instance.Id)
+		if err != nil {
+			return nil, err
+		}
+
+		code = instance.Qrcode
+		if code != "" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	code := instance.Qrcode
 	if code == "" {
 		return nil, fmt.Errorf("no QR code available")
 	}

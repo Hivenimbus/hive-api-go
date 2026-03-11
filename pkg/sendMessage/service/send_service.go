@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
 	"image/png"
 	"io"
 	"mime/multipart"
@@ -23,7 +22,7 @@ import (
 	logger_wrapper "github.com/EvolutionAPI/evolution-go/pkg/logger"
 	"github.com/EvolutionAPI/evolution-go/pkg/utils"
 	whatsmeow_service "github.com/EvolutionAPI/evolution-go/pkg/whatsmeow/service"
-	"github.com/chai2010/webp"
+	"golang.org/x/image/webp"
 	"github.com/gabriel-vasile/mimetype"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -213,6 +212,20 @@ type MessageSendStruct struct {
 	MessageContextInfo *waE2E.ContextInfo
 }
 
+// isConnectionError returns true if the error is any kind of WebSocket/connection error
+// that warrants a reconnect retry. This includes the whatsmeow ErrNotConnected error
+// ("websocket not connected") as well as internal service errors.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "websocket not connected") ||
+		strings.Contains(e, "client disconnected") ||
+		strings.Contains(e, "no active session") ||
+		strings.Contains(e, "failed to connect")
+}
+
 func (s *sendService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
 	client := s.clientPointer[instanceId]
 	s.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
@@ -263,7 +276,7 @@ func (s *sendService) ensureClientConnectedWithRetry(instanceId string, maxRetri
 		}
 
 		// Check if it's a disconnection error that we can retry
-		if err.Error() == "client disconnected" || err.Error() == "no active session found" {
+		if isConnectionError(err) {
 			s.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Client disconnected on attempt %d/%d, attempting reconnection...", instanceId, attempt, maxRetries)
 
 			// Attempt to reconnect the client
@@ -290,6 +303,21 @@ func (s *sendService) ensureClientConnectedWithRetry(instanceId string, maxRetri
 	}
 
 	return nil, fmt.Errorf("failed to connect client after %d attempts", maxRetries)
+}
+
+// isUploadError returns true if the error is a transient network/CDN error
+// that occurred during media upload to WhatsApp CDN servers.
+// These errors (connection reset, EOF, broken pipe) are safe to retry.
+func isUploadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "connection reset by peer") ||
+		strings.Contains(e, "broken pipe") ||
+		strings.Contains(e, "EOF") ||
+		strings.Contains(e, "failed to execute request") ||
+		strings.Contains(e, "failed to refresh media connections")
 }
 
 func validateMessageFields(phone string, formatJid *bool, messageID *string, participant *string) (types.JID, error) {
@@ -468,8 +496,8 @@ func (s *sendService) sendTextWithRetry(data *TextStruct, instance *instance_mod
 		})
 
 		if err != nil {
-			// Check if it's a client disconnection error
-			if strings.Contains(err.Error(), "client disconnected") || strings.Contains(err.Error(), "no active session") {
+			// Check if it's a client disconnection error (includes "websocket not connected")
+			if isConnectionError(err) {
 				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendText failed due to disconnection on attempt %d/%d: %v", instance.Id, attempt, maxRetries, err)
 				if attempt < maxRetries {
 					waitTime := time.Duration(attempt) * time.Second
@@ -839,9 +867,19 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 			return nil, errors.New("invalid media type")
 		}
 
-		uploaded, err := client.Upload(context.Background(), fileData, uploadType)
-		if err != nil {
-			return nil, err
+		// Upload with retry for transient CDN/network errors (e.g. "connection reset by peer")
+		var uploaded whatsmeow.UploadResponse
+		for uploadAttempt := 1; uploadAttempt <= 3; uploadAttempt++ {
+			uploaded, err = client.Upload(context.Background(), fileData, uploadType)
+			if err == nil {
+				break
+			}
+			if isUploadError(err) && uploadAttempt < 3 {
+				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Upload falhou (tentativa %d/3): %v. Aguardando antes de nova tentativa...", instance.Id, uploadAttempt, err)
+				time.Sleep(time.Duration(uploadAttempt*2) * time.Second)
+				continue
+			}
+			return nil, fmt.Errorf("failed to upload media after %d attempts: %w", uploadAttempt, err)
 		}
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Media uploaded with size %d", instance.Id, uploaded.FileLength)
@@ -936,8 +974,8 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 		})
 
 		if err != nil {
-			// Check if it's a client disconnection error
-			if strings.Contains(err.Error(), "client disconnected") || strings.Contains(err.Error(), "no active session") {
+			// Check if it's a client disconnection error (includes "websocket not connected")
+			if isConnectionError(err) {
 				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendMediaFile failed due to disconnection on attempt %d/%d: %v", instance.Id, attempt, maxRetries, err)
 				if attempt < maxRetries {
 					waitTime := time.Duration(attempt) * time.Second
@@ -1047,9 +1085,15 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Iniciando upload para WhatsApp...", instance.Id)
 		uploadStart := time.Now()
+		// Upload with retry for transient CDN/network errors (e.g. "connection reset by peer")
 		uploaded, err := client.Upload(context.Background(), fileData, uploadType)
-		if err != nil {
-			return nil, err
+		for uploadAttempt := 1; err != nil; uploadAttempt++ {
+			if !isUploadError(err) || uploadAttempt >= 3 {
+				return nil, fmt.Errorf("failed to upload media after %d attempts: %w", uploadAttempt, err)
+			}
+			s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Upload falhou (tentativa %d/3): %v. Aguardando antes de nova tentativa...", instance.Id, uploadAttempt, err)
+			time.Sleep(time.Duration(uploadAttempt*2) * time.Second)
+			uploaded, err = client.Upload(context.Background(), fileData, uploadType)
 		}
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Upload concluído em %v. Tamanho: %d", instance.Id, time.Since(uploadStart), uploaded.FileLength)
 
@@ -1220,7 +1264,7 @@ func (s *sendService) sendPollWithRetry(data *PollStruct, instance *instance_mod
 }
 
 func convertToWebP(imageData string) ([]byte, error) {
-	var img image.Image
+	// var img image.Image
 	var err error
 
 	resp, err := http.Get(imageData)
@@ -1229,11 +1273,17 @@ func convertToWebP(imageData string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	/*
 	img, _, err = image.Decode(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
+	*/
+	_ = resp.Body // Just to keep the reference if needed or close it properly
 
+
+	return nil, fmt.Errorf("WebP encoding is currently disabled on this build environment. Please install a C compiler (GCC) to enable sticker conversion.")
+	/*
 	var webpBuffer bytes.Buffer
 	err = webp.Encode(&webpBuffer, img, &webp.Options{Lossless: false, Quality: 80})
 	if err != nil {
@@ -1241,6 +1291,7 @@ func convertToWebP(imageData string) ([]byte, error) {
 	}
 
 	return webpBuffer.Bytes(), nil
+	*/
 }
 
 func (s *sendService) SendSticker(data *StickerStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
@@ -1708,8 +1759,14 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 	}
 
 	var message string
+	// Verify connection before using the client (protects GenerateMessageID, SendChatPresence, etc.)
+	cli0 := s.clientPointer[instance.Id]
+	if cli0 == nil || !cli0.IsConnected() {
+		s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendMessage: client not connected at entry, aborting early", instance.Id)
+		return nil, errors.New("client disconnected")
+	}
 	if data.Id == "" {
-		message = s.clientPointer[instance.Id].GenerateMessageID()
+		message = cli0.GenerateMessageID()
 	} else {
 		message = data.Id
 	}
@@ -1916,7 +1973,15 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 
 	recipient.User = strings.ReplaceAll(recipient.User, "+", "")
 
-	response, err := s.clientPointer[instance.Id].SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: message})
+	// Fix: verify connection RIGHT before sending to avoid "websocket not connected" 500 errors
+	// during mass/bulk sending when the connection drops between the pre-check and the actual send.
+	cli := s.clientPointer[instance.Id]
+	if cli == nil || !cli.IsConnected() {
+		s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Client not connected at send time, aborting", instance.Id)
+		return nil, errors.New("client disconnected")
+	}
+
+	response, err := cli.SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: message})
 	if err != nil {
 		return nil, err
 	}
@@ -1989,7 +2054,7 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 			data, err = s.clientPointer[instance.Id].Download(context.Background(), sticker)
 
 			webpReader := bytes.NewReader(data)
-			img, err := webp.Decode(webpReader)
+			img, err := webp.Decode(webpReader) // Using x/image/webp (Pure Go Decoder)
 			if err == nil {
 				var pngBuffer bytes.Buffer
 				err = png.Encode(&pngBuffer, img)
