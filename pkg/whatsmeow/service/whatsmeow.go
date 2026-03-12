@@ -166,23 +166,33 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 		}
 	}
 
-	// Passo 2: Limpar todos os recursos da instância
+	// Passo 2: Enviar sinal de kill para a goroutine existente
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Cleaning up resources", instanceId)
 
-	// Enviar sinal de kill se o canal existir
 	if killChan, exists := w.killChannel[instanceId]; exists {
 		select {
 		case killChan <- true:
-			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Kill signal sent", instanceId)
-		default:
-			// Canal pode estar bloqueado, continua
+			// Kill recebido com sucesso - a goroutine vai se reiniciar sozinha via kill handler
+			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Kill signal sent, goroutine will self-restart", instanceId)
+
+			// Limpar cache de userInfo
+			if instance, err := w.instanceRepository.GetInstanceByID(instanceId); err == nil {
+				w.userInfoCache.Delete(instance.Token)
+			}
+
+			// Atualizar status no banco
+			w.instanceRepository.UpdateQrcode(instanceId, "")
+			w.instanceRepository.UpdateConnected(instanceId, false, "Reconnecting")
+
+			return nil // goroutine cuida do restart
+		case <-time.After(5 * time.Second):
+			// Goroutine não respondeu ao kill - forçar limpeza e iniciar nova
+			w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Kill signal timed out, forcing restart", instanceId)
+			delete(w.clientPointer, instanceId)
+			delete(w.myClientPointer, instanceId)
+			delete(w.killChannel, instanceId)
 		}
 	}
-
-	// Remover das estruturas
-	delete(w.clientPointer, instanceId)
-	delete(w.myClientPointer, instanceId)
-	delete(w.killChannel, instanceId)
 
 	// Limpar cache de userInfo para esta instância
 	if instance, err := w.instanceRepository.GetInstanceByID(instanceId); err == nil {
@@ -318,6 +328,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to create container: %v", cd.Instance.Id, err)
 		return
 	}
+	defer container.Close()
 
 	if cd.Instance.Jid != "" {
 		jid, _ := utils.ParseJID(cd.Instance.Jid)
